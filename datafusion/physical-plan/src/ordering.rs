@@ -19,7 +19,9 @@ use std::sync::Arc;
 
 use datafusion_common::{Result, ScalarValue, assert_or_internal_err};
 use datafusion_expr::Operator;
-use datafusion_physical_expr::expressions::{BinaryExpr, is_not_null, is_null, lit};
+use datafusion_physical_expr::expressions::{
+    BinaryExpr, CaseExpr, is_not_null, is_null, lit,
+};
 use datafusion_physical_expr::{PhysicalExpr, PhysicalSortExpr};
 
 /// Specifies how the input to an aggregation or window operator is ordered
@@ -60,6 +62,34 @@ pub enum InputOrderMode {
     Sorted,
 }
 
+fn float_zero_is_negative(value: &ScalarValue) -> Option<bool> {
+    match value {
+        ScalarValue::Float16(Some(value)) if value.to_bits() << 1 == 0 => {
+            Some(value.is_sign_negative())
+        }
+        ScalarValue::Float32(Some(value)) if value.to_bits() << 1 == 0 => {
+            Some(value.is_sign_negative())
+        }
+        ScalarValue::Float64(Some(value)) if value.to_bits() << 1 == 0 => {
+            Some(value.is_sign_negative())
+        }
+        _ => None,
+    }
+}
+
+/// Match a scalar without SQL comparison's signed-zero normalization.
+fn exact_match_or_else(
+    expr: Arc<dyn PhysicalExpr>,
+    value: ScalarValue,
+    else_expr: Arc<dyn PhysicalExpr>,
+) -> Result<Arc<dyn PhysicalExpr>> {
+    Ok(Arc::new(CaseExpr::try_new(
+        Some(expr),
+        vec![(lit(value), lit(true))],
+        Some(else_expr),
+    )?))
+}
+
 /// Build the filter expression with the given thresholds.
 /// This is now called outside of any locks to reduce critical section time.
 pub(crate) fn build_lexicographic_filter(
@@ -87,12 +117,24 @@ pub(crate) fn build_lexicographic_filter(
         };
 
         let value_null = value.is_null();
+        let signed_zero = float_zero_is_negative(value);
 
-        let comparison = Arc::new(BinaryExpr::new(
+        let mut comparison = Arc::new(BinaryExpr::new(
             Arc::clone(&sort_expr.expr),
             op,
             lit(value.clone()),
-        ));
+        )) as Arc<dyn PhysicalExpr>;
+
+        if let Some(value_is_negative) = signed_zero {
+            // Total ordering and SQL comparison differ only for ASC/+0 and DESC/-0.
+            if sort_expr.options.descending == value_is_negative {
+                comparison = exact_match_or_else(
+                    Arc::clone(&sort_expr.expr),
+                    value.arithmetic_negate()?,
+                    comparison,
+                )?;
+            }
+        }
 
         let comparison_with_null = match (sort_expr.options.nulls_first, value_null) {
             // For nulls first, transform to (threshold.value is not null) and (threshold.expr is null or comparison)
@@ -112,7 +154,16 @@ pub(crate) fn build_lexicographic_filter(
             Arc::clone(&sort_expr.expr),
             Operator::Eq,
             lit(value.clone()),
-        ));
+        )) as Arc<dyn PhysicalExpr>;
+
+        if signed_zero.is_some() {
+            // Simple CASE uses exact float matching, unlike SQL comparisons.
+            eq_expr = exact_match_or_else(
+                Arc::clone(&sort_expr.expr),
+                value.clone(),
+                lit(false),
+            )?;
+        }
 
         if value_null {
             eq_expr = Arc::new(BinaryExpr::new(
@@ -150,4 +201,84 @@ pub(crate) fn build_lexicographic_filter(
         .expect("sort expressions are checked non-empty");
 
     Ok(dynamic_predicate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::{BooleanArray, Float64Array};
+    use arrow::compute::SortOptions;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use datafusion_common::utils::compare_rows;
+    use datafusion_physical_expr::expressions::Column;
+
+    #[test]
+    fn lexicographic_filter_matches_signed_zero_range_ordering() -> Result<()> {
+        let a_values = [-1.0, -0.0, -0.0, 0.0, 0.0, 1.0];
+        let b_values = [0.0, 0.0, 20.0, 0.0, 20.0, 0.0];
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a", DataType::Float64, false),
+            Field::new("b", DataType::Float64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Float64Array::from(a_values.to_vec())),
+                Arc::new(Float64Array::from(b_values.to_vec())),
+            ],
+        )?;
+        let a = Arc::new(Column::new("a", 0)) as Arc<dyn PhysicalExpr>;
+        let b = Arc::new(Column::new("b", 1)) as Arc<dyn PhysicalExpr>;
+
+        for descending in [false, true] {
+            let sort_options = [
+                SortOptions {
+                    descending,
+                    nulls_first: false,
+                },
+                SortOptions::default(),
+            ];
+            let sort_exprs = [
+                PhysicalSortExpr::new(Arc::clone(&a), sort_options[0]),
+                PhysicalSortExpr::new(Arc::clone(&b), sort_options[1]),
+            ];
+
+            for threshold in [-0.0, 0.0] {
+                let thresholds = [
+                    ScalarValue::Float64(Some(threshold)),
+                    ScalarValue::Float64(Some(10.0)),
+                ];
+                let filter = build_lexicographic_filter(&sort_exprs, &thresholds)?;
+                let actual = filter.evaluate(&batch)?.into_array(batch.num_rows())?;
+                let actual = actual
+                    .as_any()
+                    .downcast_ref::<BooleanArray>()
+                    .expect("filter must return BooleanArray");
+                let expected = a_values
+                    .iter()
+                    .zip(b_values.iter())
+                    .map(|(a, b)| {
+                        compare_rows(
+                            &[
+                                ScalarValue::Float64(Some(*a)),
+                                ScalarValue::Float64(Some(*b)),
+                            ],
+                            &thresholds,
+                            &sort_options,
+                        )
+                        .map(|ordering| ordering.is_lt())
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                assert_eq!(
+                    actual,
+                    &BooleanArray::from(expected),
+                    "descending={descending}, threshold={threshold:?}"
+                );
+            }
+        }
+
+        Ok(())
+    }
 }

@@ -2196,6 +2196,7 @@ mod tests {
 
     use crate::coalesce_partitions::CoalescePartitionsExec;
     use crate::execution_plan::Boundedness;
+    use crate::filter::FilterExec;
     use crate::joins::hash_join::stream::lookup_join_hashmap;
     use crate::test::{TestMemoryExec, assert_join_metrics};
     use crate::{
@@ -2204,7 +2205,8 @@ mod tests {
     };
 
     use arrow::array::{
-        Date32Array, Int32Array, Int64Array, StructArray, UInt32Array, UInt64Array,
+        Date32Array, Float64Array, Int32Array, Int64Array, StructArray, UInt32Array,
+        UInt64Array,
     };
     use arrow::buffer::NullBuffer;
     use arrow::datatypes::{DataType, Field};
@@ -6839,6 +6841,93 @@ mod tests {
         assert!(
             !mismatched_join.allow_join_dynamic_filter_pushdown(session_config.options())
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_partitioned_range_dynamic_filter_signed_zero() -> Result<()> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("zero", DataType::Float64, false),
+            Field::new("tail", DataType::Float64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                // `0.0` and explicit `+0.0` have identical bits; the tail keeps
+                // these rows distinct and exposes routing `-0.0` to the wrong filter.
+                Arc::new(Float64Array::from(vec![-0.0, 0.0, f64::from_bits(0)])),
+                Arc::new(Float64Array::from(vec![20.0, 0.0, 30.0])),
+            ],
+        )?;
+        let left_input = TestMemoryExec::try_new_exec(
+            &[vec![batch.clone()]],
+            Arc::clone(&schema),
+            None,
+        )?;
+        let right_input =
+            TestMemoryExec::try_new_exec(&[vec![batch]], Arc::clone(&schema), None)?;
+        let on = vec![
+            (
+                Arc::new(Column::new("zero", 0)) as Arc<dyn PhysicalExpr>,
+                Arc::new(Column::new("zero", 0)) as Arc<dyn PhysicalExpr>,
+            ),
+            (
+                Arc::new(Column::new("tail", 1)) as Arc<dyn PhysicalExpr>,
+                Arc::new(Column::new("tail", 1)) as Arc<dyn PhysicalExpr>,
+            ),
+        ];
+        let split_point = SplitPoint::new(vec![
+            ScalarValue::Float64(Some(0.0)),
+            ScalarValue::Float64(Some(10.0)),
+        ]);
+        let left = Arc::new(RepartitionExec::try_new(
+            left_input,
+            Partitioning::Range(RangePartitioning::try_new(
+                [
+                    PhysicalSortExpr::new(Arc::clone(&on[0].0), Default::default()),
+                    PhysicalSortExpr::new(Arc::clone(&on[1].0), Default::default()),
+                ]
+                .into(),
+                vec![split_point.clone()],
+            )?),
+        )?);
+        let right = Arc::new(RepartitionExec::try_new(
+            right_input,
+            Partitioning::Range(RangePartitioning::try_new(
+                [
+                    PhysicalSortExpr::new(Arc::clone(&on[0].1), Default::default()),
+                    PhysicalSortExpr::new(Arc::clone(&on[1].1), Default::default()),
+                ]
+                .into(),
+                vec![split_point],
+            )?),
+        )?);
+
+        let dynamic_filter = HashJoinExec::create_dynamic_filter(&on);
+        let right = Arc::new(FilterExec::try_new(
+            Arc::clone(&dynamic_filter) as Arc<dyn PhysicalExpr>,
+            right,
+        )?);
+        let join = HashJoinExec::try_new(
+            left,
+            right,
+            on,
+            None,
+            &JoinType::Inner,
+            None,
+            PartitionMode::Partitioned,
+            NullEquality::NullEqualsNothing,
+            false,
+        )?
+        .with_dynamic_filter_expr(dynamic_filter)?;
+
+        let batches = crate::execution_plan::collect(
+            Arc::new(join),
+            Arc::new(TaskContext::default()),
+        )
+        .await?;
+        assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 3);
 
         Ok(())
     }
