@@ -25,6 +25,7 @@ use crate::ParquetFileReaderFactory;
 use crate::opener::ParquetMorselizer;
 use crate::opener::build_pruning_predicates;
 use crate::opener::build_virtual_columns_state;
+use crate::push_decoder::RowGroupPrefetchOptions;
 use crate::row_filter::can_expr_be_pushed_down_with_schemas;
 use arrow_schema::Fields;
 use arrow_schema::extension::ExtensionType;
@@ -35,6 +36,7 @@ use datafusion_common::config::EncryptionFactoryOptions;
 use datafusion_datasource::as_file_source;
 use datafusion_datasource::file_stream::FileOpener;
 use datafusion_datasource::morsel::Morselizer;
+use datafusion_execution::memory_pool::MemoryPool;
 
 use arrow::array::timezone::Tz;
 use arrow::datatypes::TimeUnit;
@@ -318,6 +320,7 @@ pub struct ParquetSource {
     /// Sort order driving `PreparedAccessPlan::reorder_by_statistics`
     /// in the opener.
     sort_order_for_reorder: Option<LexOrdering>,
+    row_group_prefetch: Option<RowGroupPrefetchOptions>,
 }
 
 impl ParquetSource {
@@ -344,7 +347,33 @@ impl ParquetSource {
             encryption_factory: None,
             reverse_row_groups: false,
             sort_order_for_reorder: None,
+            row_group_prefetch: None,
         }
+    }
+
+    /// Prefetch one upcoming row group's projected column chunks while decoding
+    /// the current group. Disabled by default; a zero budget disables it.
+    ///
+    /// `max_bytes` bounds additional compressed bytes per file stream, not the
+    /// current reader's memory. Prefetch is skipped if a complete projected row
+    /// group does not fit or `memory_pool` cannot reserve its bytes. Required
+    /// reads continue normally. Use the execution's memory pool to account for
+    /// concurrent scans together.
+    ///
+    /// This can read extra bytes when page/row filtering or a later dynamic
+    /// predicate eliminates prefetched data. Output order is unchanged. Dropping
+    /// the stream cancels its background I/O. This execution-local option is not
+    /// serialized in physical plans; set it on the executing ParquetSource.
+    pub fn with_row_group_prefetch(
+        mut self,
+        max_bytes: usize,
+        memory_pool: Arc<dyn MemoryPool>,
+    ) -> Self {
+        self.row_group_prefetch = (max_bytes > 0).then_some(RowGroupPrefetchOptions {
+            max_bytes,
+            memory_pool,
+        });
+        self
     }
 
     /// Set the `TableParquetOptions` for this ParquetSource.
@@ -634,6 +663,7 @@ impl FileSource for ParquetSource {
 
         Ok(Box::new(ParquetMorselizer {
             partition_index: partition,
+            row_group_prefetch: self.row_group_prefetch.clone(),
             projection: self.projection.clone(),
             batch_size: self
                 .batch_size

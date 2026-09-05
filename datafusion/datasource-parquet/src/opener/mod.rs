@@ -29,7 +29,7 @@ use crate::metrics::{ByteProgress, RowFilterSkippedFullyMatchedMetric};
 use crate::page_filter::PagePruningAccessPlanFilter;
 use crate::push_decoder::{
     DecoderBuilderConfig, InitialDecoderState, PushDecoderStreamState, RgPlanEntry,
-    RowGroupPruner,
+    RowGroupPrefetchOptions, RowGroupPruner,
 };
 use crate::row_group_filter::{RowGroupAccessPlanFilter, row_group_in_range};
 use crate::{
@@ -236,6 +236,7 @@ fn validate_predicate_does_not_reference_virtual_columns(
 /// as an explicit state machine -- see [`ParquetOpenState`] for details.
 #[derive(Clone)]
 pub(super) struct ParquetMorselizer {
+    pub(crate) row_group_prefetch: Option<RowGroupPrefetchOptions>,
     /// Execution partition index
     pub(crate) partition_index: usize,
     /// Projection to apply on top of the table schema (i.e. can reference partition columns).
@@ -421,6 +422,7 @@ impl fmt::Debug for ParquetOpenState {
 }
 
 struct PreparedParquetOpen {
+    row_group_prefetch: Option<RowGroupPrefetchOptions>,
     partition_index: usize,
     partitioned_file: PartitionedFile,
     /// Tracks how much of this file range the scan has finished with.
@@ -854,6 +856,7 @@ impl ParquetMorselizer {
             metrics: self.metrics.clone(),
             parquet_file_reader_factory: Arc::clone(&self.parquet_file_reader_factory),
             async_file_reader,
+            row_group_prefetch: self.row_group_prefetch.clone(),
             batch_size: self.batch_size,
             logical_file_schema: Arc::clone(&logical_file_schema),
             physical_file_schema: logical_file_schema,
@@ -1667,7 +1670,11 @@ impl RowGroupsPrunedParquetOpen {
             decoder: Some(decoder),
             active_reader: None,
             rg_plan,
-            reader: prepared.async_file_reader,
+            reader: Arc::new(tokio::sync::Mutex::new(prepared.async_file_reader)),
+            row_group_prefetch: prepared.row_group_prefetch,
+            parquet_metadata: Arc::clone(reader_metadata.metadata()),
+            pending_prefetch: None,
+            prefetch_reservation: None,
             decoder_projection,
             arrow_reader_metrics,
             predicate_cache_inner_records,
@@ -2294,6 +2301,7 @@ mod test {
             )?;
 
             Ok(ParquetMorselizer {
+                row_group_prefetch: None,
                 partition_index: self.partition_index,
                 projection,
                 batch_size: self.batch_size,

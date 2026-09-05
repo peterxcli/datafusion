@@ -35,8 +35,13 @@
 //! The opener constructs both halves and hands the state off to
 //! [`PushDecoderStreamState::into_stream`] for consumption.
 
+use bytes::Bytes;
+use datafusion_common_runtime::SpawnedTask;
+use datafusion_execution::memory_pool::{MemoryConsumer, MemoryPool, MemoryReservation};
 use std::collections::VecDeque;
+use std::ops::Range;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use arrow::array::RecordBatch;
 use arrow::datatypes::SchemaRef;
@@ -280,6 +285,62 @@ impl RowGroupPruner {
     }
 }
 
+/// Execution-local prefetch configuration, supplied by the embedding engine.
+#[derive(Clone, Debug)]
+pub(crate) struct RowGroupPrefetchOptions {
+    pub(crate) max_bytes: usize,
+    pub(crate) memory_pool: Arc<dyn MemoryPool>,
+}
+
+/// At most one future row group is in flight. The task owns the reservation so
+/// cancellation keeps its bytes accounted until the I/O future is actually dropped.
+pub(crate) struct PrefetchedRowGroup {
+    row_group: usize,
+    ranges: Vec<Range<u64>>,
+    task: SpawnedTask<Result<(Vec<Bytes>, MemoryReservation)>>,
+}
+
+impl PrefetchedRowGroup {
+    fn start(
+        row_group: usize,
+        metadata: &ParquetMetaData,
+        projection: &ProjectionMask,
+        options: &RowGroupPrefetchOptions,
+        reader: Arc<Mutex<Box<dyn AsyncFileReader>>>,
+    ) -> Option<Self> {
+        let ranges: Vec<_> = metadata
+            .row_group(row_group)
+            .columns()
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| projection.leaf_included(*i))
+            .map(|(_, column)| {
+                let (start, len) = column.byte_range();
+                start.checked_add(len).map(|end| start..end)
+            })
+            .collect::<Option<_>>()?;
+        let bytes = ranges.iter().try_fold(0usize, |total, range| {
+            total.checked_add(usize::try_from(range.end - range.start).ok()?)
+        })?;
+        if bytes == 0 || bytes > options.max_bytes {
+            return None;
+        }
+        let reservation = MemoryConsumer::new("Parquet row-group prefetch")
+            .register(&options.memory_pool);
+        reservation.try_grow(bytes).ok()?;
+        let fetch_ranges = ranges.clone();
+        let task = SpawnedTask::spawn(async move {
+            let data = reader.lock().await.get_byte_ranges(fetch_ranges).await?;
+            Ok((data, reservation))
+        });
+        Some(Self {
+            row_group,
+            ranges,
+            task,
+        })
+    }
+}
+
 /// State for a stream that decodes a single Parquet file using a push-based decoder.
 ///
 /// The [`transition`](Self::transition) method drives the decoder in a loop: it requests
@@ -290,7 +351,11 @@ pub(crate) struct PushDecoderStreamState {
     pub(crate) decoder: Option<ParquetPushDecoder>,
     pub(crate) active_reader: Option<ParquetRecordBatchReader>,
     pub(crate) rg_plan: VecDeque<RgPlanEntry>,
-    pub(crate) reader: Box<dyn AsyncFileReader>,
+    pub(crate) reader: Arc<Mutex<Box<dyn AsyncFileReader>>>,
+    pub(crate) row_group_prefetch: Option<RowGroupPrefetchOptions>,
+    pub(crate) parquet_metadata: Arc<ParquetMetaData>,
+    pub(crate) pending_prefetch: Option<PrefetchedRowGroup>,
+    pub(crate) prefetch_reservation: Option<MemoryReservation>,
     /// Per-file projection: the mask installed on every decoder and the
     /// per-batch transform applied by [`Self::project_batch`].
     pub(crate) decoder_projection: DecoderProjection,
@@ -424,10 +489,10 @@ impl PushDecoderStreamState {
     /// Advances the decoder state machine until the next [`RecordBatch`] is
     /// produced, the file is fully consumed, or an error occurs.
     ///
-    /// On each iteration the decoder is polled via [`ParquetPushDecoder::try_decode`]:
+    /// At a row-group boundary the decoder is polled via [`ParquetPushDecoder::try_next_reader`]:
     /// - [`NeedsData`](DecodeResult::NeedsData) – the requested byte ranges are
     ///   fetched from the [`AsyncFileReader`] and fed back into the decoder.
-    /// - [`Data`](DecodeResult::Data) – a decoded batch is projected and returned.
+    /// - [`Data`](DecodeResult::Data) – a reader is retained for subsequent batch decoding.
     /// - [`Finished`](DecodeResult::Finished) – signals end-of-stream (`None`).
     ///
     /// Takes `self` by value (rather than `&mut self`) so the generated future
@@ -502,12 +567,44 @@ impl PushDecoderStreamState {
                 }
             }
 
+            // Apply speculation only after runtime pruning has chosen the next
+            // row group. A pruned group's task is aborted and its bytes discarded.
+            if let Some(prefetch) = self.pending_prefetch.take() {
+                let decoder = self.decoder.as_mut().expect("decoder present");
+                match decoder.peek_next_row_group() {
+                    Ok(Some(next)) if next == prefetch.row_group => {
+                        match prefetch.task.join_unwind().await {
+                            Ok(Ok((data, reservation))) => {
+                                if let Err(e) = decoder.push_ranges(prefetch.ranges, data)
+                                {
+                                    return Some((Err(e.into()), self));
+                                }
+                                self.prefetch_reservation = Some(reservation);
+                            }
+                            // A speculative error must not fail a scan that would
+                            // not need those bytes. Let demand reads retry normally.
+                            Ok(Err(e)) => debug!("Parquet prefetch failed: {e}"),
+                            Err(e) => {
+                                return Some((
+                                    Err(DataFusionError::External(Box::new(e))),
+                                    self,
+                                ));
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => return Some((Err(e.into()), self)),
+                }
+            }
+
             // Step 3: drive the decoder.
             let decoder = self.decoder.as_mut().expect("decoder present");
             match decoder.try_next_reader() {
                 Ok(DecodeResult::NeedsData(ranges)) => {
                     let data = self
                         .reader
+                        .lock()
+                        .await
                         .get_byte_ranges(ranges.clone())
                         .await
                         .map_err(DataFusionError::from);
@@ -539,6 +636,27 @@ impl PushDecoderStreamState {
                         self.byte_progress.credit(entry.bytes);
                     }
                     self.active_reader = Some(reader);
+                    // The extracted reader now owns required bytes. Release any
+                    // unused speculation (e.g. pages removed by a row filter).
+                    if let Some(reservation) = self.prefetch_reservation.take() {
+                        decoder.clear_all_ranges();
+                        drop(reservation);
+                    }
+                    if let Some(options) = &self.row_group_prefetch {
+                        match decoder.peek_next_row_group() {
+                            Ok(Some(next)) => {
+                                self.pending_prefetch = PrefetchedRowGroup::start(
+                                    next,
+                                    &self.parquet_metadata,
+                                    self.decoder_projection.projection_mask(),
+                                    options,
+                                    Arc::clone(&self.reader),
+                                );
+                            }
+                            Ok(None) => {}
+                            Err(e) => return Some((Err(e.into()), self)),
+                        }
+                    }
                 }
                 Ok(DecodeResult::Finished) => return None,
                 Err(e) => {
@@ -722,6 +840,11 @@ mod tests {
     /// column statistics are disjoint: RG0 → 0..1000, RG1 → 1000..2000,
     /// RG2 → 2000..3000. Returns (metadata, schema).
     fn build_three_rg_file() -> (Arc<ParquetMetaData>, SchemaRef) {
+        let (_, metadata, schema) = build_three_rg_file_data();
+        (metadata, schema)
+    }
+
+    fn build_three_rg_file_data() -> (Bytes, Arc<ParquetMetaData>, SchemaRef) {
         let schema = Arc::new(Schema::new(vec![Field::new("v", DataType::Int64, false)]));
         let mut buf = Vec::new();
         let props = WriterProperties::builder()
@@ -752,12 +875,392 @@ mod tests {
             reason = "we want a single range covering the whole file"
         )]
         let ranges = vec![0..len];
-        md.push_ranges(ranges, vec![file]).unwrap();
+        md.push_ranges(ranges, vec![file.clone()]).unwrap();
         let DecodeResult::Data(meta) = md.try_decode().unwrap() else {
             panic!("decoding metadata");
         };
         assert_eq!(meta.num_row_groups(), 3, "test fixture must have 3 RGs");
-        (Arc::new(meta), schema)
+        (file, Arc::new(meta), schema)
+    }
+
+    #[derive(Debug, Default)]
+    struct ReadControl {
+        calls: std::sync::atomic::AtomicUsize,
+        started: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        block_second: bool,
+        fail_second: bool,
+        latency: std::time::Duration,
+    }
+
+    #[derive(Debug, Clone)]
+    struct TestReader {
+        data: Bytes,
+        metadata: Arc<ParquetMetaData>,
+        control: Arc<ReadControl>,
+    }
+
+    impl AsyncFileReader for TestReader {
+        fn get_bytes(
+            &mut self,
+            range: Range<u64>,
+        ) -> futures::future::BoxFuture<'_, parquet::errors::Result<Bytes>> {
+            use futures::FutureExt;
+            async move { Ok(self.data.slice(range.start as usize..range.end as usize)) }
+                .boxed()
+        }
+
+        fn get_byte_ranges(
+            &mut self,
+            ranges: Vec<Range<u64>>,
+        ) -> futures::future::BoxFuture<'_, parquet::errors::Result<Vec<Bytes>>> {
+            use futures::FutureExt;
+            use std::sync::atomic::Ordering;
+            async move {
+                let call = self.control.calls.fetch_add(1, Ordering::SeqCst);
+                if call == 1 {
+                    self.control.started.notify_one();
+                    if self.control.block_second {
+                        self.control.release.notified().await;
+                    }
+                    if self.control.fail_second {
+                        return Err(parquet::errors::ParquetError::General(
+                            "injected prefetch failure".into(),
+                        ));
+                    }
+                }
+                tokio::time::sleep(self.control.latency).await;
+                Ok(ranges
+                    .into_iter()
+                    .map(|range| {
+                        self.data.slice(range.start as usize..range.end as usize)
+                    })
+                    .collect())
+            }
+            .boxed()
+        }
+
+        fn get_metadata<'a>(
+            &'a mut self,
+            _options: Option<&'a parquet::arrow::arrow_reader::ArrowReaderOptions>,
+        ) -> futures::future::BoxFuture<'a, parquet::errors::Result<Arc<ParquetMetaData>>>
+        {
+            use futures::FutureExt;
+            async move { Ok(Arc::clone(&self.metadata)) }.boxed()
+        }
+    }
+
+    impl crate::ParquetFileReaderFactory for TestReader {
+        fn create_reader(
+            &self,
+            _partition: usize,
+            _file: datafusion_datasource::PartitionedFile,
+            _hint: Option<usize>,
+            _metrics: &ExecutionPlanMetricsSet,
+        ) -> Result<Box<dyn AsyncFileReader + Send>> {
+            Ok(Box::new(self.clone()))
+        }
+    }
+
+    fn prefetch_test_stream(
+        budget: usize,
+        pool: Arc<dyn MemoryPool>,
+        control: Arc<ReadControl>,
+        limit: Option<usize>,
+        predicate: Option<Arc<dyn PhysicalExpr>>,
+    ) -> datafusion_execution::SendableRecordBatchStream {
+        use datafusion_datasource::file_scan_config::FileScanConfigBuilder;
+        use datafusion_datasource::source::DataSourceExec;
+        use datafusion_datasource::{PartitionedFile, file_groups::FileGroup};
+        use datafusion_execution::{
+            TaskContext, config::SessionConfig, object_store::ObjectStoreUrl,
+        };
+        use datafusion_physical_plan::ExecutionPlan;
+        let (data, metadata, schema) = build_three_rg_file_data();
+        let file = PartitionedFile::new("prefetch.parquet", data.len() as u64);
+        let mut source = crate::source::ParquetSource::new(schema)
+            .with_row_group_prefetch(budget, pool)
+            .with_pushdown_filters(true)
+            .with_parquet_file_reader_factory(Arc::new(TestReader {
+                data,
+                metadata,
+                control,
+            }));
+        if let Some(predicate) = predicate {
+            source = source.with_predicate(predicate);
+        }
+        let config = FileScanConfigBuilder::new(
+            ObjectStoreUrl::local_filesystem(),
+            Arc::new(source),
+        )
+        .with_file_group(FileGroup::new(vec![file]))
+        .with_limit(limit)
+        .build();
+        let task = TaskContext::default()
+            .with_session_config(SessionConfig::new().with_batch_size(100));
+        DataSourceExec::new(Arc::new(config))
+            .execute(0, Arc::new(task))
+            .unwrap()
+    }
+
+    async fn assert_pool_released(pool: &Arc<dyn MemoryPool>) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while pool.reserved() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn prefetch_overlaps_decode_and_preserves_order() {
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
+        let control = Arc::new(ReadControl {
+            block_second: true,
+            ..Default::default()
+        });
+        let mut stream = prefetch_test_stream(
+            1 << 20,
+            Arc::clone(&pool),
+            Arc::clone(&control),
+            None,
+            None,
+        );
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first.num_rows(), 100);
+        // No further polling of the scan: next-RG I/O must start independently.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            control.started.notified(),
+        )
+        .await
+        .unwrap();
+        assert!(pool.reserved() > 0);
+        let mut batches = vec![first];
+        // The current reader must keep producing while the next fetch is blocked.
+        for _ in 1..10 {
+            batches.push(
+                tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        control.release.notify_one();
+        while let Some(batch) = stream.next().await {
+            batches.push(batch.unwrap());
+        }
+        let values: Vec<i64> = batches
+            .iter()
+            .flat_map(|batch| {
+                batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap()
+                    .values()
+                    .iter()
+                    .copied()
+            })
+            .collect();
+        assert_eq!(values, (0..3000).collect::<Vec<_>>());
+        assert_pool_released(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn prefetch_budget_pool_pressure_limit_and_cancellation() {
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        use std::sync::atomic::Ordering;
+        for (budget, capacity, limit) in [
+            (0, 1 << 20, None),
+            (1, 1 << 20, None),
+            (1 << 20, 0, None),
+            (1 << 20, 1 << 20, Some(100)),
+        ] {
+            let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(capacity));
+            let control = Arc::new(ReadControl::default());
+            let mut stream = prefetch_test_stream(
+                budget,
+                Arc::clone(&pool),
+                Arc::clone(&control),
+                limit,
+                None,
+            );
+            assert_eq!(stream.next().await.unwrap().unwrap().num_rows(), 100);
+            tokio::task::yield_now().await;
+            assert_eq!(pool.reserved(), 0);
+            assert_eq!(control.calls.load(Ordering::SeqCst), 1);
+            drop(stream);
+        }
+        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
+        let control = Arc::new(ReadControl {
+            block_second: true,
+            ..Default::default()
+        });
+        let mut stream = prefetch_test_stream(
+            1 << 20,
+            Arc::clone(&pool),
+            Arc::clone(&control),
+            None,
+            None,
+        );
+        stream.next().await.unwrap().unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            control.started.notified(),
+        )
+        .await
+        .unwrap();
+        assert!(pool.reserved() > 0);
+        drop(stream); // The blocked read must be aborted without releasing its gate.
+        assert_pool_released(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn prefetch_failure_retries_on_demand() {
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        use std::sync::atomic::Ordering;
+        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
+        let control = Arc::new(ReadControl {
+            fail_second: true,
+            ..Default::default()
+        });
+        let mut stream = prefetch_test_stream(
+            1 << 20,
+            Arc::clone(&pool),
+            Arc::clone(&control),
+            None,
+            None,
+        );
+        let mut rows = 0;
+        while let Some(batch) = stream.next().await {
+            rows += batch.unwrap().num_rows();
+        }
+        assert_eq!(rows, 3000);
+        assert_eq!(control.calls.load(Ordering::SeqCst), 4);
+        assert_pool_released(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn prefetch_cancels_a_row_group_pruned_while_decoding() {
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
+        let control = Arc::new(ReadControl {
+            block_second: true,
+            ..Default::default()
+        });
+        let dynamic = Arc::new(DynamicFilterPhysicalExpr::new(
+            vec![Arc::new(Column::new("v", 0))],
+            gt_predicate(-1),
+        ));
+        let mut stream = prefetch_test_stream(
+            1 << 20,
+            Arc::clone(&pool),
+            Arc::clone(&control),
+            None,
+            Some(Arc::clone(&dynamic) as _),
+        );
+        stream.next().await.unwrap().unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            control.started.notified(),
+        )
+        .await
+        .unwrap();
+        dynamic.update(gt_predicate(2500)).unwrap();
+        // RG1 is now prunable. Its blocked prefetch must be cancelled, not awaited.
+        let rows = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut rows = 100;
+            while let Some(batch) = stream.next().await {
+                rows += batch.unwrap().num_rows();
+            }
+            rows
+        })
+        .await
+        .unwrap();
+        assert_eq!(rows, 1499); // RG0 already active; 499 rows in RG2 pass the filter.
+        assert_pool_released(&pool).await;
+    }
+
+    #[tokio::test]
+    async fn prefetch_with_row_filter_matches_demand_reads() {
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        // The modulo filter empties RG1 without statistics pruning, exercising
+        // the decoder advancing past a prefetched group without yielding a reader.
+        let modulo = Arc::new(BinaryExpr::new(
+            Arc::new(BinaryExpr::new(
+                Arc::new(Column::new("v", 0)),
+                Operator::Modulo,
+                lit(2000i64),
+            )),
+            Operator::Lt,
+            lit(1000i64),
+        )) as Arc<dyn PhysicalExpr>;
+        for (predicate, expected) in [
+            (gt_predicate(1500), (1501..3000).collect::<Vec<i64>>()),
+            (modulo, (0..1000).chain(2000..3000).collect()),
+        ] {
+            for budget in [0, 1 << 20] {
+                let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
+                let mut stream = prefetch_test_stream(
+                    budget,
+                    Arc::clone(&pool),
+                    Arc::new(ReadControl::default()),
+                    None,
+                    Some(Arc::clone(&predicate)),
+                );
+                let mut values = Vec::new();
+                while let Some(batch) = stream.next().await {
+                    values.extend_from_slice(
+                        batch
+                            .unwrap()
+                            .column(0)
+                            .as_any()
+                            .downcast_ref::<Int64Array>()
+                            .unwrap()
+                            .values(),
+                    );
+                }
+                assert_eq!(values, expected);
+                assert_pool_released(&pool).await;
+            }
+        }
+    }
+
+    /// Controlled scheduling experiment, not a production throughput benchmark.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "manual benchmark with simulated I/O and batch processing latency"]
+    async fn prefetch_latency_benchmark() {
+        use datafusion_common::instant::Instant;
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        use std::time::Duration;
+        for budget in [0, 1 << 20] {
+            let mut times = Vec::new();
+            for _ in 0..5 {
+                let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
+                let control = Arc::new(ReadControl {
+                    latency: Duration::from_millis(40),
+                    ..Default::default()
+                });
+                let mut stream =
+                    prefetch_test_stream(budget, Arc::clone(&pool), control, None, None);
+                let start = Instant::now();
+                let mut rows = 0;
+                while let Some(batch) = stream.next().await {
+                    rows += batch.unwrap().num_rows();
+                    // Simulate synchronous downstream processing on this worker.
+                    std::thread::sleep(Duration::from_millis(4));
+                }
+                assert_eq!(rows, 3000);
+                times.push(start.elapsed());
+                assert_pool_released(&pool).await;
+            }
+            times.sort();
+            println!("prefetch budget={budget}, median={:?}", times[2]);
+        }
     }
 
     /// Create a fresh `(creation_errors, evaluation_errors)` counter pair
