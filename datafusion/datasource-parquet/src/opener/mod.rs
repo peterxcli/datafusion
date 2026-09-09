@@ -237,6 +237,7 @@ fn validate_predicate_does_not_reference_virtual_columns(
 #[derive(Clone)]
 pub(super) struct ParquetMorselizer {
     pub(crate) row_group_prefetch: Option<RowGroupPrefetchOptions>,
+    pub(crate) progressive_io: bool,
     /// Execution partition index
     pub(crate) partition_index: usize,
     /// Projection to apply on top of the table schema (i.e. can reference partition columns).
@@ -423,6 +424,7 @@ impl fmt::Debug for ParquetOpenState {
 
 struct PreparedParquetOpen {
     row_group_prefetch: Option<RowGroupPrefetchOptions>,
+    progressive_io: bool,
     partition_index: usize,
     partitioned_file: PartitionedFile,
     /// Tracks how much of this file range the scan has finished with.
@@ -857,6 +859,7 @@ impl ParquetMorselizer {
             parquet_file_reader_factory: Arc::clone(&self.parquet_file_reader_factory),
             async_file_reader,
             row_group_prefetch: self.row_group_prefetch.clone(),
+            progressive_io: self.progressive_io,
             batch_size: self.batch_size,
             logical_file_schema: Arc::clone(&logical_file_schema),
             physical_file_schema: logical_file_schema,
@@ -1463,6 +1466,7 @@ impl RowGroupsPrunedParquetOpen {
             prepared.virtual_state.as_deref(),
         )?;
 
+        let mut fetch_projection = decoder_projection.projection_mask().clone();
         // Lazily-registered suppression counter shared by the open-time first-RG
         // skip below and the stream's per-RG toggle (registered on first use so
         // scans that never suppress don't carry a zero-valued counter).
@@ -1479,6 +1483,7 @@ impl RowGroupsPrunedParquetOpen {
             filter_installed,
             row_filter_context,
         } = {
+
             let pushdown_predicate = prepared
                 .pushdown_filters
                 .then_some(prepared.predicate.as_ref())
@@ -1563,6 +1568,7 @@ impl RowGroupsPrunedParquetOpen {
                 decoder_config.build(prepared_access_plan, reader_metadata.clone());
             let mut filter_installed = false;
             if let Some(ctx) = row_filter_context.as_ref() {
+                ctx.extend_projection(&mut fetch_projection);
                 if first_rg_fully_matched {
                     // The first RG is fully matched: install an empty filter
                     // and count the suppression, exactly as the per-RG toggle
@@ -1583,6 +1589,7 @@ impl RowGroupsPrunedParquetOpen {
                         builder = builder
                             .with_max_predicate_cache_size(max_predicate_cache_size);
                     }
+
                 }
             }
 
@@ -1672,8 +1679,15 @@ impl RowGroupsPrunedParquetOpen {
             rg_plan,
             reader: Arc::new(tokio::sync::Mutex::new(prepared.async_file_reader)),
             row_group_prefetch: prepared.row_group_prefetch,
+            progressive_io: prepared.progressive_io,
+            fetch_projection,
+            upfront_row_group: None,
             parquet_metadata: Arc::clone(reader_metadata.metadata()),
             pending_prefetch: None,
+            prefetch_metrics: crate::metrics::PrefetchMetrics::new(
+                &prepared.metrics,
+                prepared.partition_index,
+            ),
             prefetch_reservation: None,
             decoder_projection,
             arrow_reader_metrics,
@@ -2302,6 +2316,7 @@ mod test {
 
             Ok(ParquetMorselizer {
                 row_group_prefetch: None,
+                progressive_io: true,
                 partition_index: self.partition_index,
                 projection,
                 batch_size: self.batch_size,

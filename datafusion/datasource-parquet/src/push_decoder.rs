@@ -292,6 +292,25 @@ pub(crate) struct RowGroupPrefetchOptions {
     pub(crate) memory_pool: Arc<dyn MemoryPool>,
 }
 
+/// Full chunks shared by upfront demand reads and next-group prefetch.
+fn column_chunk_ranges(
+    metadata: &ParquetMetaData,
+    row_group: usize,
+    projection: &ProjectionMask,
+) -> Option<Vec<Range<u64>>> {
+    metadata
+        .row_group(row_group)
+        .columns()
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| projection.leaf_included(*i))
+        .map(|(_, column)| {
+            let (start, len) = column.byte_range();
+            start.checked_add(len).map(|end| start..end)
+        })
+        .collect()
+}
+
 /// At most one future row group is in flight. The task owns the reservation so
 /// cancellation keeps its bytes accounted until the I/O future is actually dropped.
 pub(crate) struct PrefetchedRowGroup {
@@ -307,30 +326,28 @@ impl PrefetchedRowGroup {
         projection: &ProjectionMask,
         options: &RowGroupPrefetchOptions,
         reader: Arc<Mutex<Box<dyn AsyncFileReader>>>,
+        metrics: &crate::metrics::PrefetchMetrics,
     ) -> Option<Self> {
-        let ranges: Vec<_> = metadata
-            .row_group(row_group)
-            .columns()
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| projection.leaf_included(*i))
-            .map(|(_, column)| {
-                let (start, len) = column.byte_range();
-                start.checked_add(len).map(|end| start..end)
-            })
-            .collect::<Option<_>>()?;
+        let ranges = column_chunk_ranges(metadata, row_group, projection)?;
         let bytes = ranges.iter().try_fold(0usize, |total, range| {
             total.checked_add(usize::try_from(range.end - range.start).ok()?)
         })?;
         if bytes == 0 || bytes > options.max_bytes {
+            metrics.budget_skips.add(1);
             return None;
         }
         let reservation = MemoryConsumer::new("Parquet row-group prefetch")
             .register(&options.memory_pool);
-        reservation.try_grow(bytes).ok()?;
+        if reservation.try_grow(bytes).is_err() {
+            metrics.budget_skips.add(1);
+            return None;
+        }
+        let metrics = metrics.clone();
         let fetch_ranges = ranges.clone();
         let task = SpawnedTask::spawn(async move {
             let data = reader.lock().await.get_byte_ranges(fetch_ranges).await?;
+            metrics.bytes.add(data.iter().map(Bytes::len).sum());
+            metrics.row_groups.add(1);
             Ok((data, reservation))
         });
         Some(Self {
@@ -353,8 +370,12 @@ pub(crate) struct PushDecoderStreamState {
     pub(crate) rg_plan: VecDeque<RgPlanEntry>,
     pub(crate) reader: Arc<Mutex<Box<dyn AsyncFileReader>>>,
     pub(crate) row_group_prefetch: Option<RowGroupPrefetchOptions>,
+    pub(crate) progressive_io: bool,
+    pub(crate) fetch_projection: ProjectionMask,
+    pub(crate) upfront_row_group: Option<usize>,
     pub(crate) parquet_metadata: Arc<ParquetMetaData>,
     pub(crate) pending_prefetch: Option<PrefetchedRowGroup>,
+    pub(crate) prefetch_metrics: crate::metrics::PrefetchMetrics,
     pub(crate) prefetch_reservation: Option<MemoryReservation>,
     /// Per-file projection: the mask installed on every decoder and the
     /// per-batch transform applied by [`Self::project_batch`].
@@ -430,6 +451,12 @@ pub(crate) struct RowFilterContext {
 }
 
 impl RowFilterContext {
+    pub(crate) fn extend_projection(&self, projection: &mut ProjectionMask) {
+        for candidate in self.prebuilt.as_slice() {
+            projection.union(&candidate.projection_mask);
+        }
+    }
+
     /// Precompute the candidate list from the raw predicate + file schema +
     /// metadata. Returns `None` when the predicate has no push-downable
     /// conjuncts (mirrors the file-open path behaviour).
@@ -573,12 +600,17 @@ impl PushDecoderStreamState {
                 let decoder = self.decoder.as_mut().expect("decoder present");
                 match decoder.peek_next_row_group() {
                     Ok(Some(next)) if next == prefetch.row_group => {
-                        match prefetch.task.join_unwind().await {
+                        let result = {
+                            let _timer = self.prefetch_metrics.wait_time.timer();
+                            prefetch.task.join_unwind().await
+                        };
+                        match result {
                             Ok(Ok((data, reservation))) => {
                                 if let Err(e) = decoder.push_ranges(prefetch.ranges, data)
                                 {
                                     return Some((Err(e.into()), self));
                                 }
+                                self.upfront_row_group = Some(prefetch.row_group);
                                 self.prefetch_reservation = Some(reservation);
                             }
                             // A speculative error must not fail a scan that would
@@ -600,7 +632,54 @@ impl PushDecoderStreamState {
             // Step 3: drive the decoder.
             let decoder = self.decoder.as_mut().expect("decoder present");
             match decoder.try_next_reader() {
-                Ok(DecodeResult::NeedsData(ranges)) => {
+                Ok(DecodeResult::NeedsData(mut ranges)) => {
+                    if !self.progressive_io {
+                        // The decoder can skip fully filtered groups internally.
+                        // Locate its current group from the demand range rather
+                        // than assuming the previous group yielded a reader.
+                        let row_group = self
+                            .rg_plan
+                            .iter()
+                            .find(|entry| {
+                                self.parquet_metadata
+                                    .row_group(entry.rg_index)
+                                    .columns()
+                                    .iter()
+                                    .any(|column| {
+                                        let (start, len) = column.byte_range();
+                                        ranges.iter().any(|r| {
+                                            r.start >= start
+                                                && r.end <= start.saturating_add(len)
+                                        })
+                                    })
+                            })
+                            .map(|entry| entry.rg_index);
+                        if let Some(row_group) = row_group {
+                            if let Err(e) =
+                                Self::advance_rg_plan_to(&mut self.rg_plan, row_group)
+                            {
+                                return Some((Err(e), self));
+                            }
+                            if self.upfront_row_group != Some(row_group) {
+                                decoder.clear_all_ranges();
+                                self.prefetch_reservation = None;
+                                let Some(chunks) = column_chunk_ranges(
+                                    &self.parquet_metadata,
+                                    row_group,
+                                    &self.fetch_projection,
+                                ) else {
+                                    return Some((
+                                        internal_err!(
+                                            "Parquet column byte range overflows u64"
+                                        ),
+                                        self,
+                                    ));
+                                };
+                                ranges = chunks;
+                                self.upfront_row_group = Some(row_group);
+                            }
+                        }
+                    }
                     let data = self
                         .reader
                         .lock()
@@ -638,9 +717,9 @@ impl PushDecoderStreamState {
                     self.active_reader = Some(reader);
                     // The extracted reader now owns required bytes. Release any
                     // unused speculation (e.g. pages removed by a row filter).
-                    if let Some(reservation) = self.prefetch_reservation.take() {
+                    if !self.progressive_io || self.prefetch_reservation.is_some() {
                         decoder.clear_all_ranges();
-                        drop(reservation);
+                        self.prefetch_reservation = None;
                     }
                     if let Some(options) = &self.row_group_prefetch {
                         match decoder.peek_next_row_group() {
@@ -648,9 +727,10 @@ impl PushDecoderStreamState {
                                 self.pending_prefetch = PrefetchedRowGroup::start(
                                     next,
                                     &self.parquet_metadata,
-                                    self.decoder_projection.projection_mask(),
+                                    &self.fetch_projection,
                                     options,
                                     Arc::clone(&self.reader),
+                                    &self.prefetch_metrics,
                                 );
                             }
                             Ok(None) => {}
@@ -845,7 +925,10 @@ mod tests {
     }
 
     fn build_three_rg_file_data() -> (Bytes, Arc<ParquetMetaData>, SchemaRef) {
-        let schema = Arc::new(Schema::new(vec![Field::new("v", DataType::Int64, false)]));
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("v", DataType::Int64, false),
+            Field::new("w", DataType::Int64, false),
+        ]));
         let mut buf = Vec::new();
         let props = WriterProperties::builder()
             .set_max_row_group_row_count(Some(1000))
@@ -857,7 +940,10 @@ mod tests {
             let vals: Vec<i64> = (base..base + 1000).collect();
             let batch = RecordBatch::try_new(
                 Arc::clone(&schema),
-                vec![Arc::new(Int64Array::from(vals))],
+                vec![
+                    Arc::new(Int64Array::from(vals.clone())),
+                    Arc::new(Int64Array::from(vals)),
+                ],
             )
             .unwrap();
             writer.write(&batch).unwrap();
@@ -969,6 +1055,17 @@ mod tests {
         limit: Option<usize>,
         predicate: Option<Arc<dyn PhysicalExpr>>,
     ) -> datafusion_execution::SendableRecordBatchStream {
+        io_test_stream(budget, pool, control, limit, predicate, true)
+    }
+
+    fn io_test_stream(
+        budget: usize,
+        pool: Arc<dyn MemoryPool>,
+        control: Arc<ReadControl>,
+        limit: Option<usize>,
+        predicate: Option<Arc<dyn PhysicalExpr>>,
+        progressive: bool,
+    ) -> datafusion_execution::SendableRecordBatchStream {
         use datafusion_datasource::file_scan_config::FileScanConfigBuilder;
         use datafusion_datasource::source::DataSourceExec;
         use datafusion_datasource::{PartitionedFile, file_groups::FileGroup};
@@ -979,6 +1076,7 @@ mod tests {
         let (data, metadata, schema) = build_three_rg_file_data();
         let file = PartitionedFile::new("prefetch.parquet", data.len() as u64);
         let mut source = crate::source::ParquetSource::new(schema)
+            .with_progressive_io(progressive)
             .with_row_group_prefetch(budget, pool)
             .with_pushdown_filters(true)
             .with_parquet_file_reader_factory(Arc::new(TestReader {
@@ -995,6 +1093,8 @@ mod tests {
         )
         .with_file_group(FileGroup::new(vec![file]))
         .with_limit(limit)
+        .with_projection_indices(Some(vec![0]))
+        .unwrap()
         .build();
         let task = TaskContext::default()
             .with_session_config(SessionConfig::new().with_batch_size(100));
@@ -1226,6 +1326,68 @@ mod tests {
                 }
                 assert_eq!(values, expected);
                 assert_pool_released(&pool).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn upfront_reads_include_predicate_only_columns_and_skip_empty_groups() {
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        use std::sync::atomic::Ordering;
+        // A predicate-only column empties the first, middle, or last group
+        // without row-group statistics pruning. Compare every returned value.
+        for empty_group in 0..3i64 {
+            for progressive in [false, true] {
+                for budget in [0, 1 << 20] {
+                    let predicate = Arc::new(BinaryExpr::new(
+                        Arc::new(BinaryExpr::new(
+                            Arc::new(Column::new("w", 1)),
+                            Operator::Divide,
+                            lit(1000i64),
+                        )),
+                        Operator::NotEq,
+                        lit(empty_group),
+                    )) as Arc<dyn PhysicalExpr>;
+                    let pool: Arc<dyn MemoryPool> =
+                        Arc::new(GreedyMemoryPool::new(1 << 20));
+                    let control = Arc::new(ReadControl::default());
+                    let mut stream = io_test_stream(
+                        budget,
+                        Arc::clone(&pool),
+                        Arc::clone(&control),
+                        None,
+                        Some(predicate),
+                        progressive,
+                    );
+                    let mut values = Vec::new();
+                    while let Some(batch) = stream.next().await {
+                        let batch = batch.unwrap();
+                        assert_eq!(batch.num_columns(), 1);
+                        values.extend_from_slice(
+                            batch
+                                .column(0)
+                                .as_any()
+                                .downcast_ref::<Int64Array>()
+                                .unwrap()
+                                .values(),
+                        );
+                    }
+                    assert_eq!(
+                        values,
+                        (0..3000)
+                            .filter(|v| v / 1000 != empty_group)
+                            .collect::<Vec<_>>()
+                    );
+                    let expected_calls = if !progressive {
+                        3
+                    } else if budget > 0 && empty_group != 1 {
+                        4
+                    } else {
+                        5
+                    };
+                    assert_eq!(control.calls.load(Ordering::SeqCst), expected_calls);
+                    assert_pool_released(&pool).await;
+                }
             }
         }
     }
