@@ -142,6 +142,13 @@ The same 256-group matrix was rerun after preserving page selections. All 192 sc
 
 </details>
 
+All 255 future groups fit the 16 MiB prefetch budget. Peak compressed prefetch
+reservations were 4.99–5.12 MB for wide output and 1.06–1.18 MB for narrow output
+without effective page pruning. With indexed, clustered matches, the peaks fell
+to 78,078 bytes (wide) and 16,587 bytes (narrow). These are exact reservation
+peaks from `PeakRecordingPool`; current-reader, decoded-buffer, and process
+memory are outside this measurement.
+
 <details>
 <summary>Fresh unmodified DF55 control, prefetch off (milliseconds)</summary>
 
