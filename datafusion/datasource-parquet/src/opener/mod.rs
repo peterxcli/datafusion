@@ -1483,7 +1483,6 @@ impl RowGroupsPrunedParquetOpen {
             filter_installed,
             row_filter_context,
         } = {
-
             let pushdown_predicate = prepared
                 .pushdown_filters
                 .then_some(prepared.predicate.as_ref())
@@ -1519,6 +1518,21 @@ impl RowGroupsPrunedParquetOpen {
                 decoder_limit: prepared.limit,
             };
 
+            let mut fetch_selections =
+                if !prepared.progressive_io || prepared.row_group_prefetch.is_some() {
+                    access_plan
+                        .inner()
+                        .iter()
+                        .map(|access| match access {
+                            crate::RowGroupAccess::Selection(selection) => {
+                                Some(selection.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![]
+                };
             let prepared_access_plan = prepare_access_plan(access_plan)?;
             // #24355: a row selection (from page-index pruning, or an externally
             // supplied `ParquetRowSelection`) is carried by the decoder as one
@@ -1545,6 +1559,9 @@ impl RowGroupsPrunedParquetOpen {
                 .zip(prepared_access_plan.fully_matched.iter().copied())
                 .map(|(rg_index, fully_matched)| RgPlanEntry {
                     rg_index,
+                    row_selection: fetch_selections
+                        .get_mut(rg_index)
+                        .and_then(Option::take),
                     fully_matched,
                     bytes: row_group_bytes(&rg_metadata[rg_index]),
                 })
@@ -1589,7 +1606,6 @@ impl RowGroupsPrunedParquetOpen {
                         builder = builder
                             .with_max_predicate_cache_size(max_predicate_cache_size);
                     }
-
                 }
             }
 
@@ -3373,6 +3389,8 @@ mod test {
 
         let props = WriterProperties::builder()
             .set_max_row_group_row_count(Some(4))
+            .set_data_page_row_count_limit(1)
+            .set_write_batch_size(1)
             .build();
 
         let data_len = write_parquet_batches(
@@ -3407,43 +3425,33 @@ mod test {
         )
         .with_extension(access_plan);
 
-        let make_opener = |reverse_scan: bool| {
-            ParquetMorselizerBuilder::new()
-                .with_store(Arc::clone(&store))
-                .with_schema(Arc::clone(&schema))
-                .with_projection_indices(&[0])
-                .with_reverse_row_groups(reverse_scan)
-                .build()
-        };
-
-        // Forward scan: RG0(3,4), RG1(5,6,7,8), RG2(9,10)
-        let opener = make_opener(false);
-        let stream = open_file(&opener, file.clone()).await.unwrap();
-        let forward_values = collect_int32_values(stream).await;
-
-        // Forward scan should produce: RG0(3,4), RG1(5,6,7,8), RG2(9,10)
-        assert_eq!(
-            forward_values,
-            vec![3, 4, 5, 6, 7, 8, 9, 10],
-            "Forward scan should select correct rows based on RowSelection"
-        );
-
-        // Reverse scan
-        // CORRECT behavior: reverse row groups AND their corresponding selections
-        // - RG2 is read first, WITH RG2's selection (select 2, skip 2) -> 9, 10
-        // - RG1 is read second, WITH RG1's selection (select all) -> 5, 6, 7, 8
-        // - RG0 is read third, WITH RG0's selection (skip 2, select 2) -> 3, 4
-        let opener = make_opener(true);
-        let stream = open_file(&opener, file).await.unwrap();
-        let reverse_values = collect_int32_values(stream).await;
-
-        // Correct expected result: row groups reversed but each keeps its own selection
-        // RG2 with its selection (9,10), RG1 with its selection (5,6,7,8), RG0 with its selection (3,4)
-        assert_eq!(
-            reverse_values,
-            vec![9, 10, 5, 6, 7, 8, 3, 4],
-            "Reverse scan should reverse row group order while maintaining correct RowSelection for each group"
-        );
+        for progressive_io in [false, true] {
+            for prefetch in [false, true] {
+                for (reverse, expected) in [
+                    (false, vec![3, 4, 5, 6, 7, 8, 9, 10]),
+                    (true, vec![9, 10, 5, 6, 7, 8, 3, 4]),
+                ] {
+                    let mut opener = ParquetMorselizerBuilder::new()
+                        .with_store(Arc::clone(&store))
+                        .with_schema(Arc::clone(&schema))
+                        .with_projection_indices(&[0])
+                        .with_reverse_row_groups(reverse)
+                        .build();
+                    opener.progressive_io = progressive_io;
+                    opener.row_group_prefetch =
+                        prefetch.then(|| RowGroupPrefetchOptions {
+                            max_bytes: 1 << 20,
+                            memory_pool: Arc::new(
+                                datafusion_execution::memory_pool::GreedyMemoryPool::new(
+                                    1 << 20,
+                                ),
+                            ),
+                        });
+                    let stream = open_file(&opener, file.clone()).await.unwrap();
+                    assert_eq!(collect_int32_values(stream).await, expected);
+                }
+            }
+        }
     }
 
     #[tokio::test]

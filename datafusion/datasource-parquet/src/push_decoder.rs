@@ -52,7 +52,8 @@ use parquet::DecodeResult;
 use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::metrics::ArrowReaderMetrics;
 use parquet::arrow::arrow_reader::{
-    ArrowReaderMetadata, ParquetRecordBatchReader, RowFilter, RowSelectionPolicy,
+    ArrowReaderMetadata, ParquetRecordBatchReader, RowFilter, RowSelection,
+    RowSelectionPolicy,
 };
 use parquet::arrow::async_reader::AsyncFileReader;
 use parquet::arrow::push_decoder::{ParquetPushDecoder, ParquetPushDecoderBuilder};
@@ -119,6 +120,8 @@ impl DecoderBuilderConfig<'_> {
 #[derive(Debug, Clone)]
 pub(crate) struct RgPlanEntry {
     pub(crate) rg_index: usize,
+    /// Selection made before row-filter evaluation, in this row group's coordinates.
+    pub(crate) row_selection: Option<RowSelection>,
     /// `true` when static pruning proved every row of this RG satisfies the
     /// predicate, so the per-row `RowFilter` can be skipped as a no-op.
     pub(crate) fully_matched: bool,
@@ -292,23 +295,62 @@ pub(crate) struct RowGroupPrefetchOptions {
     pub(crate) memory_pool: Arc<dyn MemoryPool>,
 }
 
-/// Full chunks shared by upfront demand reads and next-group prefetch.
-fn column_chunk_ranges(
+/// Preserve the access plan's page pruning when fetching output and predicate
+/// columns together. Without a selection or offset index, fetch complete chunks.
+fn column_ranges(
     metadata: &ParquetMetaData,
-    row_group: usize,
+    entry: &RgPlanEntry,
     projection: &ProjectionMask,
 ) -> Option<Vec<Range<u64>>> {
-    metadata
-        .row_group(row_group)
+    let offset_index = metadata
+        .offset_index()
+        .and_then(|index| index.get(entry.rg_index));
+    let mut ranges = Vec::new();
+    for (i, column) in metadata
+        .row_group(entry.rg_index)
         .columns()
         .iter()
         .enumerate()
         .filter(|(i, _)| projection.leaf_included(*i))
-        .map(|(_, column)| {
-            let (start, len) = column.byte_range();
-            start.checked_add(len).map(|end| start..end)
-        })
-        .collect()
+    {
+        let (start, len) = column.byte_range();
+        let end = start.checked_add(len)?;
+        if let Some((selection, index)) = entry.row_selection.as_ref().zip(offset_index) {
+            if !selection.selects_any() {
+                continue;
+            }
+            let pages = &index.get(i)?.page_locations;
+            // The prefix before the first data page contains the dictionary.
+            if let Some(first) = pages.first() {
+                let first_offset = u64::try_from(first.offset).ok()?;
+                if first_offset < start || first_offset > end {
+                    return None;
+                }
+                if first_offset > start {
+                    ranges.push(start..first_offset);
+                }
+            }
+            ranges.extend(selection.scan_ranges(pages));
+        } else {
+            ranges.push(start..end);
+        }
+    }
+    Some(ranges)
+}
+
+/// Make adjacent pages usable for decoder requests that span a whole chunk,
+/// without fetching across gaps left by page pruning.
+fn merge_ranges(mut ranges: Vec<Range<u64>>) -> Vec<Range<u64>> {
+    ranges.sort_unstable_by_key(|range| range.start);
+    ranges.dedup_by(|next, previous| {
+        if next.start <= previous.end {
+            previous.end = previous.end.max(next.end);
+            true
+        } else {
+            false
+        }
+    });
+    ranges
 }
 
 /// At most one future row group is in flight. The task owns the reservation so
@@ -321,14 +363,14 @@ pub(crate) struct PrefetchedRowGroup {
 
 impl PrefetchedRowGroup {
     fn start(
-        row_group: usize,
+        entry: &RgPlanEntry,
         metadata: &ParquetMetaData,
         projection: &ProjectionMask,
         options: &RowGroupPrefetchOptions,
         reader: Arc<Mutex<Box<dyn AsyncFileReader>>>,
         metrics: &crate::metrics::PrefetchMetrics,
     ) -> Option<Self> {
-        let ranges = column_chunk_ranges(metadata, row_group, projection)?;
+        let ranges = merge_ranges(column_ranges(metadata, entry, projection)?);
         let bytes = ranges.iter().try_fold(0usize, |total, range| {
             total.checked_add(usize::try_from(range.end - range.start).ok()?)
         })?;
@@ -351,7 +393,7 @@ impl PrefetchedRowGroup {
             Ok((data, reservation))
         });
         Some(Self {
-            row_group,
+            row_group: entry.rg_index,
             ranges,
             task,
         })
@@ -655,27 +697,33 @@ impl PushDecoderStreamState {
                             })
                             .map(|entry| entry.rg_index);
                         if let Some(row_group) = row_group {
-                            if let Err(e) =
-                                Self::advance_rg_plan_to(&mut self.rg_plan, row_group)
-                            {
+                            if let Err(e) = Self::advance_rg_plan_to(
+                                &mut self.rg_plan,
+                                row_group,
+                                &mut self.byte_progress,
+                            ) {
                                 return Some((Err(e), self));
                             }
                             if self.upfront_row_group != Some(row_group) {
                                 decoder.clear_all_ranges();
                                 self.prefetch_reservation = None;
-                                let Some(chunks) = column_chunk_ranges(
+                                let Some(mut upfront_ranges) = column_ranges(
                                     &self.parquet_metadata,
-                                    row_group,
+                                    self.rg_plan.front().expect("current row group"),
                                     &self.fetch_projection,
                                 ) else {
                                     return Some((
                                         internal_err!(
-                                            "Parquet column byte range overflows u64"
+                                            "Invalid Parquet column or page byte range"
                                         ),
                                         self,
                                     ));
                                 };
-                                ranges = chunks;
+                                // Predicate caching may expand its selection to
+                                // batch boundaries. Keep the decoder's request
+                                // as well as the page-pruned output ranges.
+                                upfront_ranges.extend(ranges);
+                                ranges = merge_ranges(upfront_ranges);
                                 self.upfront_row_group = Some(row_group);
                             }
                         }
@@ -724,8 +772,13 @@ impl PushDecoderStreamState {
                     if let Some(options) = &self.row_group_prefetch {
                         match decoder.peek_next_row_group() {
                             Ok(Some(next)) => {
+                                let entry = self
+                                    .rg_plan
+                                    .iter()
+                                    .find(|entry| entry.rg_index == next)
+                                    .expect("next row group is in the access plan");
                                 self.pending_prefetch = PrefetchedRowGroup::start(
-                                    next,
+                                    entry,
                                     &self.parquet_metadata,
                                     &self.fetch_projection,
                                     options,
@@ -1549,6 +1602,7 @@ mod tests {
             .into_iter()
             .map(|rg_index| RgPlanEntry {
                 rg_index,
+                row_selection: None,
                 fully_matched: false,
                 bytes: 100 * (rg_index as u64 + 1),
             })
@@ -1584,6 +1638,7 @@ mod tests {
         let err =
             PushDecoderStreamState::advance_rg_plan_to(&mut plan, 5, &mut byte_progress)
                 .expect_err("a target absent from the plan must be an internal error");
+
         assert!(
             err.to_string().contains("diverged"),
             "expected a divergence internal error, got: {err}",

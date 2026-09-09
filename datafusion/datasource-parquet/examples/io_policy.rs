@@ -217,6 +217,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     vec![0, 2, 3, 4, 5, 6, 7]
                 };
+                let mut expected_bytes = None;
                 for round in 0..4 {
                     // Rotate all six configurations to reduce ordering bias.
                     for offset in 0..6 {
@@ -319,6 +320,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 v => v.as_usize(),
                             }).unwrap_or(0)
                         };
+                        let bytes = metric("bytes_scanned");
+                        assert_eq!(
+                            bytes,
+                            *expected_bytes.get_or_insert(bytes),
+                            "I/O policy must preserve this fixture's page pruning without duplicate reads"
+                        );
                         println!(
                             "{},{},{},{},{},{round},{size},{elapsed:.3},{rows},{checksum},{},{},{},{},{peak},{},{}",
                             if clustered { "clustered" } else { "random" },

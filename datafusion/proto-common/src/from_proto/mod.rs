@@ -1083,6 +1083,7 @@ impl TryFrom<&protobuf::ParquetOptions> for ParquetOptions {
                 })
                 .transpose()?,
             pushdown_filters: value.pushdown_filters,
+            progressive_io: value.progressive_io.unwrap_or(true),
             reorder_filters: value.reorder_filters,
             force_filter_selections: value.force_filter_selections,
             data_pagesize_limit: to_usize(
@@ -1476,6 +1477,21 @@ mod tests {
         assert!(!opts.content_defined_chunking.enabled);
         let recovered = parquet_options_proto_round_trip(opts.clone());
         assert_eq!(opts, recovered);
+    }
+
+    #[test]
+    fn test_parquet_progressive_io_round_trip_and_older_plan_default() {
+        for progressive_io in [false, true] {
+            let opts = ParquetOptions {
+                progressive_io,
+                ..Default::default()
+            };
+            assert_eq!(parquet_options_proto_round_trip(opts.clone()), opts);
+            let mut proto: crate::protobuf_common::ParquetOptions =
+                (&opts).try_into().unwrap();
+            proto.progressive_io = None;
+            assert!(ParquetOptions::try_from(&proto).unwrap().progressive_io);
+        }
     }
 
     #[test]

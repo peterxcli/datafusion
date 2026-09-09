@@ -1090,6 +1090,7 @@ async fn roundtrip_logical_plan_copy_to_parquet() -> Result<()> {
         .clone_from(&key_value_metadata);
 
     parquet_format.global.allow_single_file_parallelism = false;
+    parquet_format.global.progressive_io = false;
     parquet_format.global.created_by = "test".to_string();
 
     let file_type = format_as_file_type(Arc::new(
@@ -1132,6 +1133,7 @@ async fn roundtrip_logical_plan_copy_to_parquet() -> Result<()> {
             let parquet_config = parquet_factory.options.as_ref().unwrap();
             assert_eq!(parquet_config.key_value_metadata, key_value_metadata);
             assert!(!parquet_config.global.allow_single_file_parallelism);
+            assert!(!parquet_config.global.progressive_io);
             assert_eq!(parquet_config.global.created_by, "test".to_string());
         }
         _ => panic!(),

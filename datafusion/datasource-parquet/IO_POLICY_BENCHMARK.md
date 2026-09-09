@@ -20,25 +20,48 @@
 # Parquet I/O policy experiment
 
 This fork experiment targets DataFusion 55.0.0 so Comet can use the patch through
-Cargo git dependencies. Both new options are execution-local `ParquetSource`
-builders. Progressive fetching remains the default and prefetch is disabled by
-default.
+Cargo git dependencies. Progressive fetching remains the default and next-row-group
+prefetch is disabled by default.
 
-- `with_progressive_io(false)` fetches the output and predicate column chunks
-  together when a row group first requests data. Filters still determine which
-  rows are returned, but can no longer save the bytes already fetched.
-- `with_row_group_prefetch(bytes, memory_pool)` fetches at most one next row group
-  while the current reader produces batches. The budget and memory pool bound
-  additional compressed bytes; they do not bound current-reader or decoded memory.
-  The full group is skipped when it cannot fit. Dropping the scan cancels pending
-  work. A speculative read error is retried through the ordinary demand path.
+For `SELECT name FROM people WHERE age > 30`, **progressive reads** fetch the `age`
+pages, evaluate the filter, then fetch the `name` pages needed for surviving rows.
+**Upfront reads** fetch the required `age` and `name` pages together before
+running the row filter. Both first use metadata to skip irrelevant row groups
+and pages. Upfront reads reduce dependent I/O rounds, but can fetch pages that
+the row filter would have ruled out.
 
-The two controls are configured independently. Prefetch includes columns used only
-by row filters and always fetches full chunks. Consequently, progressive fetching
-with prefetch also changes the I/O policy for groups successfully prefetched. To
-isolate overlap while holding fetched chunks constant, compare upfront fetching
-with prefetch off/on. Compare progressive and upfront with prefetch off to measure
-the dependent-read versus extra-bytes tradeoff.
+The current implementation preserves the page selection made at file open,
+including external row selections and dictionary pages. Adjacent ranges are merged
+so a later whole-chunk decoder request can reuse them; gaps left by page pruning
+remain unread. Without an offset index,
+it fetches complete column chunks. Predicate caching can expand decoder requests
+to batch boundaries; those requests remain supported, so this is not a promise
+that every scan finishes in exactly one read per row group.
+
+Use normal DataFusion session configuration, including SQL `SET`, before
+registering the table:
+
+```sql
+SET datafusion.execution.parquet.pushdown_filters = true;
+SET datafusion.execution.parquet.progressive_io = false;
+```
+
+`ParquetSource::with_progressive_io(false)` sets the same table option. The setting
+survives plan serialization; older serialized plans retain progressive reads.
+It does not enable filter pushdown automatically.
+
+`with_row_group_prefetch(bytes, memory_pool)` separately fetches at most one next
+row group's selected output and predicate pages while the current reader produces
+batches. Its budget bounds additional compressed bytes, not current-reader or
+decoded memory. A group is skipped if its selected bytes cannot fit. Dropping the
+scan cancels pending work; speculative read errors retry through demand reads.
+This execution-local prefetch option is not serialized.
+
+Prefetch can fetch pages that later row filtering or dynamic pruning would skip.
+Compare progressive and upfront with prefetch **off** to isolate the policy in
+[#24393](https://github.com/apache/datafusion/issues/24393). Compare upfront with
+prefetch off/on separately to assess overlap. Neither option changes defaults
+or establishes that the broader filter-pushdown regressions are resolved.
 
 ## Reproduce
 
@@ -76,7 +99,129 @@ excluding reads internal to `get_metadata`; they are not physical disk operation
 or HTTP request counts. `prefetch_peak` uses DataFusion's existing `PeakRecordingPool` to record peak prefetch reservations. It does not measure current-reader, decoded-buffer, or total process memory. `prefetch_bytes` and `prefetch_row_groups` count completed
 speculative reads, including bytes subsequently discarded.
 
-## Measurements (2026-09-09)
+## Page-selection revision (2026-09-10)
+
+Apple M4, 10 CPU cores, 24 GiB RAM; Rust 1.97.0, Arrow/Parquet 59.2.0,
+`release-nonlto`, two Tokio workers for the synthetic matrix.
+
+The same 256-group matrix was rerun after preserving page selections. All 192 scans passed the independent row-count/checksum assertions. In all eight workloads and all six policies, requested byte counts now match the pushdown-off control, including prefetch. This equality is specific to this predicate-only fixture; row-filter selectivity, dictionary layout, and predicate-cache expansion can change the comparison in other queries.
+
+![Current policy timing ratios.](benchmark-charts/parquet-pages-timings.png)
+
+![Earlier whole-chunk versus current page-selected requested bytes.](benchmark-charts/parquet-pages-bytes.png)
+
+<details>
+<summary>Current medians in milliseconds</summary>
+
+| Workload                      |    Off | Off +PF | Progressive | Progressive +PF | Upfront | Upfront +PF |
+| ----------------------------- | -----: | ------: | ----------: | --------------: | ------: | ----------: |
+| random, no indexes, wide      | 1494.4 |  1385.7 |      1512.0 |          1407.6 |  1516.2 |      1422.4 |
+| random, no indexes, narrow    |  355.7 |   330.7 |       354.3 |           325.6 |   349.9 |       325.2 |
+| random, indexes, wide         | 1500.1 |  1390.5 |      1715.8 |          1430.7 |  1534.6 |      1429.2 |
+| random, indexes, narrow       |  356.8 |   344.4 |       378.9 |           332.8 |   355.3 |       332.4 |
+| clustered, no indexes, wide   | 1479.3 |  1383.7 |       299.4 |           289.8 |   290.0 |       288.2 |
+| clustered, no indexes, narrow |  340.2 |   318.5 |       208.1 |           203.2 |   205.7 |       202.7 |
+| clustered, indexes, wide      |   44.4 |    37.8 |        47.5 |            36.0 |    42.1 |        36.0 |
+| clustered, indexes, narrow    |   21.3 |    18.9 |        25.7 |            22.5 |    20.9 |        22.5 |
+
+</details>
+
+<details>
+<summary>Current requested bytes and reader calls (prefetch off)</summary>
+
+| Workload                      | Bytes (all policies) | Off calls | Progressive calls | Upfront calls |
+| ----------------------------- | -------------------: | --------: | ----------------: | ------------: |
+| random, no indexes, wide      |        1,309,357,880 |       256 |               512 |           256 |
+| random, no indexes, narrow    |          303,126,105 |       256 |               512 |           256 |
+| random, indexes, wide         |        1,318,274,373 |       257 |               513 |           257 |
+| random, indexes, narrow       |          312,042,598 |       257 |               513 |           257 |
+| clustered, no indexes, wide   |        1,278,042,437 |       256 |               512 |           256 |
+| clustered, no indexes, narrow |          271,810,662 |       256 |               512 |           256 |
+| clustered, indexes, wide      |           28,883,141 |       257 |               513 |           257 |
+| clustered, indexes, narrow    |           13,160,491 |       257 |               513 |           257 |
+
+</details>
+
+<details>
+<summary>Fresh unmodified DF55 control, prefetch off (milliseconds)</summary>
+
+| Workload                      | Baseline off | Current off | Baseline progressive | Current progressive |
+| ----------------------------- | -----------: | ----------: | -------------------: | ------------------: |
+| random, no indexes, wide      |       1493.3 |      1494.4 |               1503.0 |              1512.0 |
+| random, no indexes, narrow    |        354.9 |       355.7 |                356.1 |               354.3 |
+| random, indexes, wide         |       1494.1 |      1500.1 |               1712.8 |              1715.8 |
+| random, indexes, narrow       |        359.9 |       356.8 |                378.2 |               378.9 |
+| clustered, no indexes, wide   |       1497.1 |      1479.3 |                302.2 |               299.4 |
+| clustered, no indexes, narrow |        343.7 |       340.2 |                209.5 |               208.1 |
+| clustered, indexes, wide      |         44.6 |        44.4 |                 47.5 |                47.5 |
+| clustered, indexes, narrow    |         21.1 |        21.3 |                 25.4 |                25.7 |
+
+</details>
+
+The baseline rerun uses the unchanged DF55 executable described below and passed all 64 scan assertions. The current matrix ran before the baseline, with no builds from this task running during either measurement. These are local desktop samples, not evidence that the defaults have zero overhead or that the wider performance epic is resolved.
+
+### Reported ClickBench query regressions
+
+The existing `dfbench clickbench` runner executed the unchanged Q10, Q11, Q22,
+Q24, Q25, and Q26 query files referenced by the regression work in
+[#20324](https://github.com/apache/datafusion/issues/20324). Input was the public
+[`hits_0.parquet`](https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_0.parquet)
+partition: 122,446,530 bytes, 1,000,000 rows, two row groups. This covers one
+partition of the 100-file dataset. Target partitions were set to one, filter
+reordering was enabled in every case, and next-row-group prefetch was disabled.
+
+Each case ran four iterations. The table and chart use the median of iterations
+1–3, after the first warmup. The second pass reversed the policy order. All 144
+executions succeeded and returned ten rows. The benchmark records row counts;
+result values were not independently compared. The SQL reader
+regression test separately checks values across all 48 policy/data combinations.
+
+![ClickBench progressive and upfront timings relative to pushdown off, in two passes.](benchmark-charts/parquet-pages-clickbench.png)
+
+Q11, Q22, Q24, Q25, and Q26 remained slower with upfront I/O in both passes.
+For example, Q25 upfront medians were 6.55 and 7.36 ms, versus 4.86 ms with
+pushdown off in each pass. Changing the I/O policy alone does not remove these
+observed slowdowns. The small local sample does not identify their cause;
+full-dataset measurements and profiling remain necessary before changing defaults.
+
+<details>
+<summary>ClickBench medians in milliseconds</summary>
+
+| Query | Off, first | Progressive, first | Upfront, first | Off, repeat | Progressive, repeat | Upfront, repeat |
+| ----- | ---------: | -----------------: | -------------: | ----------: | ------------------: | --------------: |
+| Q10   |       5.06 |               5.00 |           5.01 |        4.22 |                4.13 |            4.44 |
+| Q11   |       5.03 |               5.83 |           5.90 |        4.76 |                5.26 |            5.08 |
+| Q22   |      90.53 |             101.25 |         100.25 |       83.56 |              102.69 |          100.46 |
+| Q24   |       6.87 |               8.79 |           8.66 |        7.30 |                8.73 |            9.23 |
+| Q25   |       4.86 |               6.77 |           6.55 |        4.86 |                6.69 |            7.36 |
+| Q26   |       7.02 |               9.63 |           9.18 |        7.08 |                9.94 |            9.81 |
+
+</details>
+
+Example command for upfront Q10, using the same build profile as the matrix:
+
+```sh
+cargo build --profile release-nonlto -p datafusion-benchmarks --bin dfbench
+curl -LO https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_0.parquet
+target/release-nonlto/dfbench clickbench --path hits_0.parquet \
+  --queries-path benchmarks/queries/clickbench/queries --query 10 \
+  --iterations 4 --partitions 1 --pushdown \
+  -c datafusion.execution.parquet.reorder_filters=true \
+  -c datafusion.execution.parquet.progressive_io=false
+```
+
+Use `progressive_io=true` for progressive reads. For the off control, omit
+`--pushdown` and set `datafusion.execution.parquet.pushdown_filters=false`.
+Repeat for query numbers 10, 11, 22, 24, 25, and 26.
+
+## Earlier measurements: whole-chunk implementation (2026-09-09)
+
+These historical results describe commit `943ddfc20`, before the page-selection
+fix above. The 21–45× byte amplification below is the regression this revision
+addresses; it must not be attributed to the current implementation.
+
+<details>
+<summary>Earlier charts, timings, and baseline controls</summary>
 
 Apple M4, 10 CPU cores, 24 GiB RAM, Rust 1.97.0, `release-nonlto`, two Tokio worker threads. Implementation: [`943ddfc20`](https://github.com/peterxcli/datafusion/commit/943ddfc209147ebd8022853482009c2827d77b59). The four files are approximately 1.29–1.32 GB compressed each. All 384 scans across two complete patched runs and all 64 baseline scans passed the independent row-count and checksum assertions, including warmups.
 
@@ -172,3 +317,5 @@ To isolate overlap, compare **Upfront** with **Upfront +PF**, which fetch the sa
 All groups fit the 16 MiB prefetch budget in this fixture; 255 future groups were prefetched. Peak compressed prefetch reservations were about 5.1 MB for wide output and 1.1 MB for narrow output. These are exact reservation peaks from `PeakRecordingPool`, not total reader/process memory. Upfront demand allocations are outside that prefetch reservation.
 
 The full-chunk prefetch strategy loses much of page pruning's byte savings even when progressive demand reads are selected. Both options therefore remain opt-in. A remote-object-store benchmark with real latency, bandwidth limits, backend request counters, and concurrent scans is still needed before an upstream performance claim.
+
+</details>
