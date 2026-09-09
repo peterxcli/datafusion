@@ -80,7 +80,16 @@ speculative reads, including bytes subsequently discarded.
 
 Apple M4, 10 CPU cores, 24 GiB RAM, Rust 1.97.0, `release-nonlto`, two Tokio worker threads. Implementation: [`943ddfc20`](https://github.com/peterxcli/datafusion/commit/943ddfc209147ebd8022853482009c2827d77b59). The four files are approximately 1.29–1.32 GB compressed each. All 384 scans across two complete patched runs and all 64 baseline scans passed the independent row-count and checksum assertions, including warmups.
 
-The two tables report milliseconds, each cell a median of three measured scans. `+PF` means a 16 MiB prefetch budget. Both runs are shown because timings moved substantially even though no other build from this experiment ran during measurement. Other desktop activity was uncontrolled. These measurements support the I/O tradeoff; they do not establish a stable overall speedup or zero overhead with the options disabled.
+Each plotted value is a median of three measured scans. `+PF` means a 16 MiB prefetch budget. Both runs are shown because timings moved substantially even though no other build from this experiment ran during measurement. Other desktop activity was uncontrolled. These measurements support the I/O tradeoff; they do not establish a stable overall speedup or zero overhead with the options disabled.
+
+### Timing comparison
+
+Each panel uses the same logarithmic scale. **1× is progressive fetching without prefetch in that workload and run**; points to the left are faster, points to the right are slower. Normalizing each run makes policy differences visible across workloads, but hides absolute timing drift; the unmodified DF55 comparison below shows that separately.
+
+![Six-policy elapsed-time comparison across eight workloads. Blue circles show the first run and orange triangles the repeat, relative to progressive fetching without prefetch.](benchmark-charts/parquet-policy-timings.png)
+
+<details>
+<summary>Exact timing medians in milliseconds: first and repeat runs</summary>
 
 ### First run
 
@@ -108,9 +117,16 @@ The two tables report milliseconds, each cell a median of three measured scans. 
 | clustered, indexes, wide      |   48.0 |   131.5 |        50.6 |           131.8 |   152.2 |       133.7 |
 | clustered, indexes, narrow    |   22.5 |    40.3 |        26.3 |            44.1 |    41.2 |        43.2 |
 
+</details>
+
 ### Unmodified DataFusion 55 control
 
 The baseline is [`d55523420`](https://github.com/peterxcli/datafusion/commit/d55523420), the fork's `codex/df55-base`. It uses the same benchmark harness, compiler/profile, dependency lock versions, and two-worker runtime, with only the new builder calls removed and the configurations restricted to off/progressive without prefetch. It ran after the first patched matrix and before the repeat. The table compares the progressive configuration without prefetch in all three runs.
+
+![Patched progressive reads without prefetch compared with unmodified DataFusion 55. Most points exceed 1x, and first-run and repeat ratios differ.](benchmark-charts/parquet-policy-baseline.png)
+
+<details>
+<summary>Exact baseline timing medians in milliseconds</summary>
 
 | Data                          |  DF 55 | Patched first | Patched repeat |
 | ----------------------------- | -----: | ------------: | -------------: |
@@ -123,11 +139,18 @@ The baseline is [`d55523420`](https://github.com/peterxcli/datafusion/commit/d55
 | clustered, indexes, wide      |   50.4 |          48.5 |           50.6 |
 | clustered, indexes, narrow    |   25.6 |          25.8 |           26.3 |
 
+</details>
+
 Several disabled-option controls were slower than unmodified DF 55, and the repeat also moved substantially. This experiment cannot distinguish code overhead from machine/load drift. A stable machine with interleaved baseline/patch trials is required before claiming an end-to-end improvement or promoting defaults.
 
 ### Reader I/O and memory
 
 The following counts are from the first run, without prefetch. Byte counts include metadata. Calls and ranges have the wrapper scope described above.
+
+![Progressive and upfront requested bytes for all eight workloads. Indexed clustered data reads 44.6x more bytes for wide output and 21.3x more for narrow output with upfront fetching.](benchmark-charts/parquet-policy-io.png)
+
+<details>
+<summary>Exact requested bytes, reader calls, and logical ranges</summary>
 
 | Data                          | Progressive bytes | Upfront bytes | Progressive calls / ranges | Upfront calls / ranges |
 | ----------------------------- | ----------------: | ------------: | -------------------------: | ---------------------: |
@@ -139,6 +162,8 @@ The following counts are from the first run, without prefetch. Byte counts inclu
 | clustered, no indexes, narrow |       271,810,662 |   271,810,662 |                  512 / 512 |              256 / 512 |
 | clustered, indexes, wide      |        28,883,141 | 1,286,958,261 |                 513 / 4097 |             257 / 2049 |
 | clustered, indexes, narrow    |        13,160,491 |   280,726,486 |                 513 / 1025 |              257 / 513 |
+
+</details>
 
 For random matches without indexes, upfront reads reduce 512 reader calls to 256 while fetching the same bytes. With indexes, batching also removes the many small selected-page ranges. For indexed clustered matches, progressive fetching reads only selected pages: upfront reads instead fetch **44.6×** as many bytes for wide output and **21.3×** for narrow output. The wide upfront configurations take approximately 2.4–3.0× the progressive time across these runs.
 
