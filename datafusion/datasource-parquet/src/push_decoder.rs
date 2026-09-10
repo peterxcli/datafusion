@@ -707,10 +707,16 @@ impl PushDecoderStreamState {
                             if self.upfront_row_group != Some(row_group) {
                                 decoder.clear_all_ranges();
                                 self.prefetch_reservation = None;
+                                let entry =
+                                    self.rg_plan.front().expect("current row group");
                                 let Some(mut upfront_ranges) = column_ranges(
                                     &self.parquet_metadata,
-                                    self.rg_plan.front().expect("current row group"),
-                                    &self.fetch_projection,
+                                    entry,
+                                    if entry.fully_matched {
+                                        self.decoder_projection.projection_mask()
+                                    } else {
+                                        &self.fetch_projection
+                                    },
                                 ) else {
                                     return Some((
                                         internal_err!(
@@ -780,7 +786,11 @@ impl PushDecoderStreamState {
                                 self.pending_prefetch = PrefetchedRowGroup::start(
                                     entry,
                                     &self.parquet_metadata,
-                                    &self.fetch_projection,
+                                    if entry.fully_matched {
+                                        self.decoder_projection.projection_mask()
+                                    } else {
+                                        &self.fetch_projection
+                                    },
                                     options,
                                     Arc::clone(&self.reader),
                                     &self.prefetch_metrics,
@@ -1025,6 +1035,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct ReadControl {
         calls: std::sync::atomic::AtomicUsize,
+        bytes: std::sync::atomic::AtomicUsize,
         started: tokio::sync::Notify,
         release: tokio::sync::Notify,
         block_second: bool,
@@ -1056,6 +1067,10 @@ mod tests {
             use futures::FutureExt;
             use std::sync::atomic::Ordering;
             async move {
+                self.control.bytes.fetch_add(
+                    ranges.iter().map(|r| (r.end - r.start) as usize).sum(),
+                    Ordering::SeqCst,
+                );
                 let call = self.control.calls.fetch_add(1, Ordering::SeqCst);
                 if call == 1 {
                     self.control.started.notify_one();
@@ -1131,6 +1146,9 @@ mod tests {
         let mut source = crate::source::ParquetSource::new(schema)
             .with_progressive_io(progressive)
             .with_row_group_prefetch(budget, pool)
+            // Page selections disable runtime pruning (#24355). Page-pruned
+            // I/O is covered by the session-configuration integration test.
+            .with_enable_page_index(false)
             .with_pushdown_filters(true)
             .with_parquet_file_reader_factory(Arc::new(TestReader {
                 data,
@@ -1439,6 +1457,65 @@ mod tests {
                         5
                     };
                     assert_eq!(control.calls.load(Ordering::SeqCst), expected_calls);
+                    assert_pool_released(&pool).await;
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn io_policies_preserve_fully_matched_filter_suppression() {
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        use std::sync::atomic::Ordering;
+
+        let (_, metadata, _) = build_three_rg_file_data();
+        // Exercise both directions: fully matched -> filtered, and the reverse.
+        // The predicate column is absent from the output in both cases.
+        for (operator, expected, row_groups) in [
+            (Operator::Lt, (0..1500).collect::<Vec<i64>>(), [0, 1]),
+            (Operator::GtEq, (1500..3000).collect::<Vec<i64>>(), [1, 2]),
+        ] {
+            let expected_bytes = row_groups
+                .iter()
+                .map(|&rg| metadata.row_group(rg).column(0).byte_range().1)
+                .sum::<u64>()
+                + metadata.row_group(1).column(1).byte_range().1;
+            for progressive in [true, false] {
+                for budget in [0, 1 << 20] {
+                    let pool: Arc<dyn MemoryPool> =
+                        Arc::new(GreedyMemoryPool::new(1 << 20));
+                    let control = Arc::new(ReadControl::default());
+                    let predicate = Arc::new(BinaryExpr::new(
+                        Arc::new(Column::new("w", 1)),
+                        operator,
+                        lit(1500i64),
+                    ));
+                    let mut stream = io_test_stream(
+                        budget,
+                        Arc::clone(&pool),
+                        Arc::clone(&control),
+                        None,
+                        Some(predicate),
+                        progressive,
+                    );
+                    let mut values = Vec::new();
+                    while let Some(batch) = stream.next().await {
+                        values.extend_from_slice(
+                            batch
+                                .unwrap()
+                                .column(0)
+                                .as_any()
+                                .downcast_ref::<Int64Array>()
+                                .unwrap()
+                                .values(),
+                        );
+                    }
+                    assert_eq!(values, expected);
+                    assert_eq!(
+                        control.bytes.load(Ordering::SeqCst) as u64,
+                        expected_bytes,
+                        "predicate-only chunks in fully matched groups must stay unread"
+                    );
                     assert_pool_released(&pool).await;
                 }
             }

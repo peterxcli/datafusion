@@ -865,7 +865,7 @@ async fn upfront_io_preserves_page_pruning_from_session_configuration() {
                 .set_offset_index_disabled(!indexed)
                 .build();
             let mut writer = ArrowWriter::try_new(
-                std::fs::File::create(&path).unwrap(),
+                File::create(&path).unwrap(),
                 Arc::clone(&schema),
                 Some(props),
             )
