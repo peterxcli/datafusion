@@ -25,11 +25,11 @@ with 10 CPU cores and 24 GiB RAM.
 
 | Revision                                                                                                          | DataFusion | Arrow/Parquet |
 | ----------------------------------------------------------------------------------------------------------------- | ---------- | ------------- |
-| [Upstream main `40488988a`](https://github.com/apache/datafusion/commit/40488988ad596c9b093ad60e1453430d803ce33c) | 55.0.0     | 59.3.0        |
-| [Current patch implementation `8411b35ba`](https://github.com/peterxcli/datafusion/commit/8411b35ba)              | 55.0.0     | 59.2.0        |
+| [Upstream main `408696966`](https://github.com/apache/datafusion/commit/4086969669f96c0d5de03f442f2dba1869d2ee80) | 55.0.0     | 59.3.0        |
+| [Current patch implementation `801cb0e52`](https://github.com/peterxcli/datafusion/commit/801cb0e52)              | 55.0.0     | 59.3.0        |
 
-Each revision uses its checked-in dependency lockfile. The comparison includes
-changes elsewhere in main and differences in dependency versions.
+The patch is rebased onto the measured upstream commit. Both revisions use
+the same dependency lockfile, with Arrow/Parquet 59.3.0.
 
 ## Synthetic Parquet scans
 
@@ -47,12 +47,18 @@ including the indexed, clustered cases: 28.9 MB for wide output and 13.2 MB for
 narrow output. All patch configurations, including prefetch, requested the same
 bytes in this fixture.
 
-**Elapsed-time comparisons were unstable across passes.** For example, main's
-progressive scan of indexed, clustered narrow output measured 273.3 ms in pass 1
-and 26.4 ms in pass 2. Patch progressive measured 27.8 and 26.5 ms. The
-pass-1 timing gap therefore does not establish a stable patch speedup. Desktop
-processes were active during the run; this measurement cannot isolate their
-contribution to the variation.
+With prefetch off, indexed clustered wide output took **41.3/41.0 ms** with
+upfront reads versus **48.2/45.1 ms** on main progressive across the two passes
+(9–14% less elapsed time). Narrow output took **20.1/20.1 ms** versus
+**25.5/23.7 ms** (15–21% less).
+
+Gains depended on the workload. Random wide output without indexes changed
+direction: 1.2% faster in pass 1 and 2.2% slower in pass 2. Main's clustered
+wide scan without indexes also moved from 361.1 to 305.8 ms between passes,
+while patch upfront measured 298.6 and 297.1 ms. These warm desktop timings
+retain variation that two reversed passes cannot eliminate. Patch progressive
+was also 3.4%/9.7% slower than main progressive on indexed random wide output;
+this control warrants profiling.
 
 The [benchmark example](examples/io_policy.rs) uses four Snappy Parquet files,
 each containing 256 row groups of 131,072 rows and eight Int64 columns:
@@ -86,27 +92,27 @@ artificial I/O or downstream delay. Other desktop activity was uncontrolled.
 
 | Workload                      | Main off | Patch off | Patch off +PF | Main progressive | Patch progressive | Patch progressive +PF | Patch upfront | Patch upfront +PF |
 | ----------------------------- | -------: | --------: | ------------: | ---------------: | ----------------: | --------------------: | ------------: | ----------------: |
-| random, no indexes, wide      |   1607.1 |    2496.6 |        2148.2 |           1625.1 |            2684.2 |                2258.6 |        2511.7 |            2082.2 |
-| random, no indexes, narrow    |    379.0 |     388.4 |         352.2 |            384.2 |             386.5 |                 346.6 |         380.9 |             348.0 |
-| random, indexes, wide         |   1928.1 |    1478.8 |        1384.9 |           3096.5 |            1728.4 |                1432.1 |        1532.2 |            1427.5 |
-| random, indexes, narrow       |    755.0 |     357.2 |         336.9 |            946.1 |             376.8 |                 334.8 |         357.3 |             332.6 |
-| clustered, no indexes, wide   |   2453.4 |    1566.2 |        1489.5 |            832.4 |             305.1 |                 293.1 |         295.7 |             317.6 |
-| clustered, no indexes, narrow |    781.1 |     378.6 |         350.2 |            687.1 |             226.0 |                 222.6 |         224.7 |             225.8 |
-| clustered, indexes, wide      |     58.7 |      54.8 |          44.9 |             64.9 |              55.2 |                  40.6 |          49.2 |              40.3 |
-| clustered, indexes, narrow    |    154.4 |      22.7 |          21.4 |            273.3 |              27.8 |                  25.7 |          22.6 |              25.7 |
+| random, no indexes, wide      |   1521.5 |    1506.8 |        1398.6 |           1543.6 |            1542.5 |                1414.5 |        1524.4 |            1418.9 |
+| random, no indexes, narrow    |    363.1 |     357.0 |         330.1 |            356.3 |             360.0 |                 327.0 |         352.4 |             325.5 |
+| random, indexes, wide         |   1539.8 |    1512.4 |        1400.2 |           1765.3 |            1825.8 |                1431.5 |        1550.0 |            1547.5 |
+| random, indexes, narrow       |    366.4 |     361.7 |         335.7 |            402.4 |             380.2 |                 334.2 |         361.8 |             336.2 |
+| clustered, no indexes, wide   |   1551.3 |    1504.2 |        1400.6 |            361.1 |             310.7 |                 299.4 |         298.6 |             300.0 |
+| clustered, no indexes, narrow |    358.3 |     369.9 |         319.8 |            218.9 |             209.5 |                 204.7 |         204.4 |             206.4 |
+| clustered, indexes, wide      |     45.6 |      43.3 |          35.7 |             48.2 |              46.0 |                  34.7 |          41.3 |              34.8 |
+| clustered, indexes, narrow    |     20.9 |      20.0 |          17.7 |             25.5 |              24.1 |                  22.1 |          20.1 |              22.0 |
 
 ### Pass 2
 
 | Workload                      | Main off | Patch off | Patch off +PF | Main progressive | Patch progressive | Patch progressive +PF | Patch upfront | Patch upfront +PF |
 | ----------------------------- | -------: | --------: | ------------: | ---------------: | ----------------: | --------------------: | ------------: | ----------------: |
-| random, no indexes, wide      |   1629.0 |    1574.1 |        1429.3 |           1623.3 |            1550.0 |                1553.2 |        1639.8 |            1457.3 |
-| random, no indexes, narrow    |    380.9 |     380.2 |         340.2 |            379.3 |             373.8 |                 325.0 |         366.7 |             343.3 |
-| random, indexes, wide         |   1543.6 |    1568.6 |        1448.3 |           1754.4 |            1813.3 |                1495.8 |        1617.8 |            1478.8 |
-| random, indexes, narrow       |    441.4 |     378.3 |         346.0 |            404.6 |             386.7 |                 349.8 |         382.4 |             343.9 |
-| clustered, no indexes, wide   |   1696.9 |    1555.7 |        1494.5 |            350.0 |             320.6 |                 314.6 |         312.3 |             308.0 |
-| clustered, no indexes, narrow |    371.7 |     384.2 |         349.8 |            220.4 |             219.3 |                 224.5 |         221.3 |             220.6 |
-| clustered, indexes, wide      |     48.5 |      45.8 |          38.2 |             49.7 |              49.5 |                  38.4 |          46.3 |              38.1 |
-| clustered, indexes, narrow    |     21.1 |      22.1 |          19.1 |             26.4 |              26.5 |                  24.1 |          22.2 |              24.0 |
+| random, no indexes, wide      |   1527.1 |    1499.0 |        1392.5 |           1559.8 |            1520.8 |                1469.7 |        1594.3 |            1408.3 |
+| random, no indexes, narrow    |    355.4 |     355.1 |         329.0 |            357.1 |             355.3 |                 323.4 |         351.5 |             324.4 |
+| random, indexes, wide         |   1504.0 |    1495.0 |        1400.6 |           1726.7 |            1894.5 |                1424.5 |        1557.1 |            1429.4 |
+| random, indexes, narrow       |    359.6 |     365.1 |         337.1 |            378.2 |             381.6 |                 334.3 |         362.3 |             333.0 |
+| clustered, no indexes, wide   |   1497.1 |    1502.2 |        1398.0 |            305.8 |             305.9 |                 294.3 |         297.1 |             294.1 |
+| clustered, no indexes, narrow |    345.4 |     343.4 |         320.5 |            208.1 |             209.7 |                 206.2 |         204.0 |             206.4 |
+| clustered, indexes, wide      |     43.1 |      43.2 |          35.8 |             45.1 |              46.2 |                  34.3 |          41.0 |              34.0 |
+| clustered, indexes, narrow    |     19.7 |      20.3 |          19.1 |             23.7 |              24.2 |                  21.9 |          20.1 |              22.7 |
 
 </details>
 
@@ -143,13 +149,15 @@ For narrow output, peak prefetch reservations ranged from 16,587 to 1,184,818 by
 
 ## ClickBench
 
-Upfront Q24 measured 8.92 and 8.75 ms, versus main progressive's 10.00 and
-10.15 ms. Q25 changed direction between passes: 7.42 versus 6.76 ms in pass 1,
-and 6.64 versus 7.09 ms in pass 2. The comparison shows query-specific results
-and variation between passes.
+Upfront reads were slower than main with pushdown off for **all six queries
+in both passes**. Compared with main progressive, Q26 improved in both passes:
+**10.73/9.76 ms** versus **11.00/10.09 ms**. Q10 and Q24 changed direction
+between passes; Q11 and Q25 were slower in both passes.
 
-Upfront medians exceeded main with pushdown off for Q10, Q22, Q24, Q25, and Q26
-in both passes.
+Q22 illustrates the timing variation: main progressive measured 107.18 and
+152.95 ms, while patch upfront measured 107.46 and 108.08 ms. The apparent
+second-pass gain therefore needs further measurement. Fewer reader calls in
+the synthetic fixture do not establish a general query-speed improvement.
 
 ![ClickBench elapsed-time ratios for the current patch against main.](benchmark-charts/parquet-main-clickbench.png)
 
@@ -173,29 +181,28 @@ counts; result values were not independently compared.
 
 | Query | Main off | Patch off | Main progressive | Patch progressive | Patch upfront |
 | ----- | -------: | --------: | ---------------: | ----------------: | ------------: |
-| Q10   |     5.06 |      5.19 |             5.79 |              5.11 |          5.59 |
-| Q11   |     4.97 |      4.89 |             5.81 |              5.76 |          5.74 |
-| Q22   |    93.88 |     91.93 |           110.93 |            108.74 |        110.14 |
-| Q24   |     8.11 |      7.59 |            10.00 |              9.62 |          8.92 |
-| Q25   |     5.11 |      4.87 |             6.76 |              7.05 |          7.42 |
-| Q26   |     8.36 |      8.29 |            12.63 |             11.12 |         12.05 |
+| Q10   |     4.64 |      4.48 |             5.79 |              5.05 |          5.29 |
+| Q11   |     4.93 |      4.95 |             5.51 |              5.61 |          6.29 |
+| Q22   |    88.79 |     85.20 |           107.18 |            111.30 |        107.46 |
+| Q24   |     7.55 |      9.43 |            10.80 |              9.83 |         11.21 |
+| Q25   |     5.16 |      5.12 |             7.33 |              6.89 |          7.57 |
+| Q26   |     7.67 |      7.53 |            11.00 |             10.71 |         10.72 |
 
 ### Pass 2
 
 | Query | Main off | Patch off | Main progressive | Patch progressive | Patch upfront |
 | ----- | -------: | --------: | ---------------: | ----------------: | ------------: |
-| Q10   |     4.21 |      4.25 |             5.05 |              5.06 |          4.63 |
-| Q11   |     5.13 |      5.19 |             5.48 |              5.15 |          5.04 |
-| Q22   |    84.72 |     83.33 |           102.40 |            103.86 |        103.36 |
-| Q24   |     7.18 |      7.15 |            10.15 |              8.97 |          8.75 |
-| Q25   |     4.85 |      4.93 |             7.09 |              6.87 |          6.64 |
-| Q26   |     7.42 |      7.37 |            10.19 |              9.93 |          9.63 |
+| Q10   |     3.93 |      4.09 |             5.05 |              4.82 |          5.67 |
+| Q11   |     4.48 |      4.70 |             5.73 |              5.24 |          5.81 |
+| Q22   |    84.01 |     85.92 |           152.95 |            108.44 |        108.08 |
+| Q24   |     7.22 |      7.11 |             8.80 |              9.34 |          8.68 |
+| Q25   |     4.82 |      5.06 |             6.85 |              7.01 |          6.97 |
+| Q26   |     7.25 |      7.45 |            10.09 |              9.85 |          9.76 |
 
 </details>
 
 These local samples do not establish full-dataset, remote-storage, or Spark
-end-to-end performance. Timing differences include all changes between the two
-revisions; broader measurements are needed before changing defaults.
+end-to-end performance. Broader measurements are needed before changing defaults.
 
 ## Reproduce
 
