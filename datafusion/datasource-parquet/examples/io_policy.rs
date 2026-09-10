@@ -16,6 +16,8 @@
 // under the License.
 
 //! Local-file I/O policy experiment. Run with a row-group count (default 64).
+//! An optional second argument names a directory for sharing generated input files.
+//! Existing files are reused and checked against the generated expected results.
 //! Round zero warms each configuration. No artificial latency is injected.
 //! Reader calls/ranges exclude internal footer reads; bytes_scanned includes them.
 //! The pool peak covers prefetch reservations, not total scan memory.
@@ -57,6 +59,7 @@ use parquet::{
     file::{
         metadata::ParquetMetaData,
         properties::{EnabledStatistics, WriterProperties},
+        reader::{FileReader, SerializedFileReader},
     },
 };
 use std::{
@@ -135,12 +138,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>(),
     ));
     let directory = tempfile::tempdir()?;
+    let data_dir = std::env::args()
+        .nth(2)
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| directory.path().to_path_buf());
+    std::fs::create_dir_all(&data_dir)?;
     println!(
         "distribution,indexes,projection,mode,prefetch,round,file_bytes,elapsed_ms,rows,checksum,bytes_scanned,reader_calls,reader_ranges,page_rows_pruned,prefetch_peak,prefetch_bytes,prefetch_row_groups"
     );
     for clustered in [false, true] {
         for indexed in [false, true] {
-            let path = directory.path().join("scan.parquet");
+            let path =
+                data_dir.join(format!("scan-{clustered}-{indexed}-{groups}.parquet"));
             let props = WriterProperties::builder()
                 .set_compression(Compression::SNAPPY)
                 .set_dictionary_enabled(false)
@@ -153,11 +162,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .set_offset_index_disabled(!indexed)
                 .build();
-            let mut writer = ArrowWriter::try_new(
-                std::fs::File::create(&path)?,
-                Arc::clone(&schema),
-                Some(props),
-            )?;
+            let mut writer = if path.exists() {
+                None
+            } else {
+                Some(ArrowWriter::try_new(
+                    std::fs::File::create(&path)?,
+                    Arc::clone(&schema),
+                    Some(props),
+                )?)
+            };
             let mut random = 42u64;
             let mut expected_rows = 0;
             let mut expected_wide = 0i64;
@@ -193,16 +206,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                writer.write(&RecordBatch::try_new(
-                    Arc::clone(&schema),
-                    columns
-                        .into_iter()
-                        .map(|v| Arc::new(Int64Array::from(v)) as _)
-                        .collect(),
-                )?)?;
-                writer.flush()?;
+                if let Some(writer) = &mut writer {
+                    writer.write(&RecordBatch::try_new(
+                        Arc::clone(&schema),
+                        columns
+                            .into_iter()
+                            .map(|v| Arc::new(Int64Array::from(v)) as _)
+                            .collect(),
+                    )?)?;
+                    writer.flush()?;
+                }
             }
-            let metadata = writer.close()?;
+            let metadata = if let Some(writer) = writer {
+                writer.close()?
+            } else {
+                SerializedFileReader::new(std::fs::File::open(&path)?)?
+                    .metadata()
+                    .clone()
+            };
             assert_eq!(metadata.num_row_groups(), groups);
             for group in metadata.row_groups() {
                 for column in group.columns() {

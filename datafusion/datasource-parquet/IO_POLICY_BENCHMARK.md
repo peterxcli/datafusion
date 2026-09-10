@@ -17,312 +17,218 @@
   under the License.
 -->
 
-# Parquet I/O policy experiment
+# Parquet I/O benchmarks: current patch versus upstream main
 
-This fork experiment targets DataFusion 55.0.0 so Comet can use the patch through
-Cargo git dependencies. Progressive fetching remains the default and next-row-group
-prefetch is disabled by default.
+These measurements compare the current patch with upstream `main` fetched on
+2026-09-10. Both use Rust 1.97.0 and the `release-nonlto` profile on an Apple M4
+with 10 CPU cores and 24 GiB RAM.
 
-For `SELECT name FROM people WHERE age > 30`, **progressive reads** fetch the `age`
-pages, evaluate the filter, then fetch the `name` pages needed for surviving rows.
-**Upfront reads** fetch the required `age` and `name` pages together before
-running the row filter. Both first use metadata to skip irrelevant row groups
-and pages. Upfront reads reduce dependent I/O rounds, but can fetch pages that
-the row filter would have ruled out.
+| Revision                                                                                                          | DataFusion | Arrow/Parquet |
+| ----------------------------------------------------------------------------------------------------------------- | ---------- | ------------- |
+| [Upstream main `40488988a`](https://github.com/apache/datafusion/commit/40488988ad596c9b093ad60e1453430d803ce33c) | 55.0.0     | 59.3.0        |
+| [Current patch implementation `8411b35ba`](https://github.com/peterxcli/datafusion/commit/8411b35ba)              | 55.0.0     | 59.2.0        |
 
-The current implementation preserves the page selection made at file open,
-including external row selections and dictionary pages. Adjacent ranges are merged
-so a later whole-chunk decoder request can reuse them; gaps left by page pruning
-remain unread. Without an offset index,
-it fetches complete column chunks. Predicate caching can expand decoder requests
-to batch boundaries; those requests remain supported, so this is not a promise
-that every scan finishes in exactly one read per row group.
+Each revision uses its checked-in dependency lockfile. The comparison includes
+changes elsewhere in main and differences in dependency versions.
 
-Use normal DataFusion session configuration, including SQL `SET`, before
-registering the table:
+## Synthetic Parquet scans
 
-```sql
-SET datafusion.execution.parquet.pushdown_filters = true;
-SET datafusion.execution.parquet.progressive_io = false;
-```
+![Elapsed-time ratios for the current patch against main, with pushdown off and on.](benchmark-charts/parquet-main-timings.png)
 
-`ParquetSource::with_progressive_io(false)` sets the same table option. The setting
-survives plan serialization; older serialized plans retain progressive reads.
-It does not enable filter pushdown automatically.
+The left panel compares patch configurations with main's pushdown-off scan.
+The right panel compares them with main's progressive scan with pushdown enabled.
+Values below 1× are faster; values above 1× are slower. Each point is the median
+of three measured scans after one warmup. Circles and diamonds show two passes
+with the revision order reversed.
 
-`with_row_group_prefetch(bytes, memory_pool)` separately fetches at most one next
-row group's selected output and predicate pages while the current reader produces
-batches. Its budget bounds additional compressed bytes, not current-reader or
-decoded memory. A group is skipped if its selected bytes cannot fit. Dropping the
-scan cancels pending work; speculative read errors retry through demand reads.
-This execution-local prefetch option is not serialized.
+Upfront I/O reduced reader calls from **512 to 256** without indexes and from
+**513 to 257** with indexes. Requested bytes matched main in every workload,
+including the indexed, clustered cases: 28.9 MB for wide output and 13.2 MB for
+narrow output. All patch configurations, including prefetch, requested the same
+bytes in this fixture.
 
-Prefetch can fetch pages that later row filtering or dynamic pruning would skip.
-Compare progressive and upfront with prefetch **off** to isolate the policy in
-[#24393](https://github.com/apache/datafusion/issues/24393). Compare upfront with
-prefetch off/on separately to assess overlap. Neither option changes defaults
-or establishes that the broader filter-pushdown regressions are resolved.
+**Elapsed-time comparisons were unstable across passes.** For example, main's
+progressive scan of indexed, clustered narrow output measured 273.3 ms in pass 1
+and 26.4 ms in pass 2. Patch progressive measured 27.8 and 26.5 ms. The
+pass-1 timing gap therefore does not establish a stable patch speedup. Desktop
+processes were active during the run; this measurement cannot isolate their
+contribution to the variation.
+
+The [benchmark example](examples/io_policy.rs) uses four Snappy Parquet files,
+each containing 256 row groups of 131,072 rows and eight Int64 columns:
+33,554,432 rows and 2 GiB of logical values per file. Both binaries read the same
+files, generated by the patch runner. File generation and expected-result
+calculation are outside the timed region.
+
+The predicate is `c1 < 10000`. Wide output returns seven columns; narrow output
+returns one. Both omit the predicate column. The data has scattered or
+page-clustered matches, with or without column and offset indexes. Every scan
+checks its row count and checksum against values calculated during generation.
+All 512 full-size scans passed, as did 256 smoke scans on one-row-group files.
+
+Main runs pushdown off and progressive reads. The patch runs those configurations
+plus upfront reads, each with prefetch off/on. Upfront reads fetch selected
+predicate and output pages together before evaluating the row filter. Prefetch
+uses a 16 MiB budget for one future row group. Statistics and page-index pruning
+remain enabled in every configuration. Pushdown-off plans apply `FilterExec`
+before projecting the output columns.
+
+The runtime has two Tokio workers and an 8,192-row batch size. Each pass rotates
+configuration order across one warmup and three measured rounds. Revision order
+is patch/main for the first pass and main/patch for the second. No builds from
+this task ran during measurement. These are warm local-file timings, with no
+artificial I/O or downstream delay. Other desktop activity was uncontrolled.
+
+<details>
+<summary>Exact median elapsed times in milliseconds</summary>
+
+### Pass 1
+
+| Workload                      | Main off | Patch off | Patch off +PF | Main progressive | Patch progressive | Patch progressive +PF | Patch upfront | Patch upfront +PF |
+| ----------------------------- | -------: | --------: | ------------: | ---------------: | ----------------: | --------------------: | ------------: | ----------------: |
+| random, no indexes, wide      |   1607.1 |    2496.6 |        2148.2 |           1625.1 |            2684.2 |                2258.6 |        2511.7 |            2082.2 |
+| random, no indexes, narrow    |    379.0 |     388.4 |         352.2 |            384.2 |             386.5 |                 346.6 |         380.9 |             348.0 |
+| random, indexes, wide         |   1928.1 |    1478.8 |        1384.9 |           3096.5 |            1728.4 |                1432.1 |        1532.2 |            1427.5 |
+| random, indexes, narrow       |    755.0 |     357.2 |         336.9 |            946.1 |             376.8 |                 334.8 |         357.3 |             332.6 |
+| clustered, no indexes, wide   |   2453.4 |    1566.2 |        1489.5 |            832.4 |             305.1 |                 293.1 |         295.7 |             317.6 |
+| clustered, no indexes, narrow |    781.1 |     378.6 |         350.2 |            687.1 |             226.0 |                 222.6 |         224.7 |             225.8 |
+| clustered, indexes, wide      |     58.7 |      54.8 |          44.9 |             64.9 |              55.2 |                  40.6 |          49.2 |              40.3 |
+| clustered, indexes, narrow    |    154.4 |      22.7 |          21.4 |            273.3 |              27.8 |                  25.7 |          22.6 |              25.7 |
+
+### Pass 2
+
+| Workload                      | Main off | Patch off | Patch off +PF | Main progressive | Patch progressive | Patch progressive +PF | Patch upfront | Patch upfront +PF |
+| ----------------------------- | -------: | --------: | ------------: | ---------------: | ----------------: | --------------------: | ------------: | ----------------: |
+| random, no indexes, wide      |   1629.0 |    1574.1 |        1429.3 |           1623.3 |            1550.0 |                1553.2 |        1639.8 |            1457.3 |
+| random, no indexes, narrow    |    380.9 |     380.2 |         340.2 |            379.3 |             373.8 |                 325.0 |         366.7 |             343.3 |
+| random, indexes, wide         |   1543.6 |    1568.6 |        1448.3 |           1754.4 |            1813.3 |                1495.8 |        1617.8 |            1478.8 |
+| random, indexes, narrow       |    441.4 |     378.3 |         346.0 |            404.6 |             386.7 |                 349.8 |         382.4 |             343.9 |
+| clustered, no indexes, wide   |   1696.9 |    1555.7 |        1494.5 |            350.0 |             320.6 |                 314.6 |         312.3 |             308.0 |
+| clustered, no indexes, narrow |    371.7 |     384.2 |         349.8 |            220.4 |             219.3 |                 224.5 |         221.3 |             220.6 |
+| clustered, indexes, wide      |     48.5 |      45.8 |          38.2 |             49.7 |              49.5 |                  38.4 |          46.3 |              38.1 |
+| clustered, indexes, narrow    |     21.1 |      22.1 |          19.1 |             26.4 |              26.5 |                  24.1 |          22.2 |              24.0 |
+
+</details>
+
+### Requested bytes, reader calls, and memory
+
+`bytes_scanned` includes metadata and speculative reads. Reader calls count
+invocations observed by the reader wrapper, excluding footer reads inside
+`get_metadata`. They do not count physical disk operations or HTTP requests.
+The following counts use prefetch off and were identical across the two passes.
+
+<details>
+<summary>Exact requested bytes and reader calls</summary>
+
+| Workload                      | Main progressive bytes | Patch upfront bytes | Main progressive calls | Patch progressive calls | Patch upfront calls |
+| ----------------------------- | ---------------------: | ------------------: | ---------------------: | ----------------------: | ------------------: |
+| random, no indexes, wide      |          1,309,357,880 |       1,309,357,880 |                    512 |                     512 |                 256 |
+| random, no indexes, narrow    |            303,126,105 |         303,126,105 |                    512 |                     512 |                 256 |
+| random, indexes, wide         |          1,318,274,373 |       1,318,274,373 |                    513 |                     513 |                 257 |
+| random, indexes, narrow       |            312,042,598 |         312,042,598 |                    513 |                     513 |                 257 |
+| clustered, no indexes, wide   |          1,278,042,437 |       1,278,042,437 |                    512 |                     512 |                 256 |
+| clustered, no indexes, narrow |            271,810,662 |         271,810,662 |                    512 |                     512 |                 256 |
+| clustered, indexes, wide      |             28,883,141 |          28,883,141 |                    513 |                     513 |                 257 |
+| clustered, indexes, narrow    |             13,160,491 |          13,160,491 |                    513 |                     513 |                 257 |
+
+</details>
+
+Prefetch memory is measured with `PeakRecordingPool`. Main has no prefetch
+reservation. The patch's figures cover additional compressed reservations;
+current-reader, decoded-buffer, and total process memory are outside this metric.
+
+For wide output, peak prefetch reservations ranged from 78,078 to 5,115,597 bytes.
+
+For narrow output, peak prefetch reservations ranged from 16,587 to 1,184,818 bytes.
+
+## ClickBench
+
+Upfront Q24 measured 8.92 and 8.75 ms, versus main progressive's 10.00 and
+10.15 ms. Q25 changed direction between passes: 7.42 versus 6.76 ms in pass 1,
+and 6.64 versus 7.09 ms in pass 2. The comparison shows query-specific results
+and variation between passes.
+
+Upfront medians exceeded main with pushdown off for Q10, Q22, Q24, Q25, and Q26
+in both passes.
+
+![ClickBench elapsed-time ratios for the current patch against main.](benchmark-charts/parquet-main-clickbench.png)
+
+The existing `dfbench clickbench` runner executes unchanged Q10, Q11, Q22, Q24,
+Q25, and Q26 SQL files against the same public
+[`hits_0.parquet`](https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_0.parquet)
+file: 122,446,530 bytes, 1,000,000 rows, and two row groups. This is one partition
+of the 100-file dataset. Both revisions use one target partition and enable
+filter reordering. Prefetch is disabled.
+
+Each case has one warmup and three measured iterations. The second pass reverses
+the order of the five revision/configuration combinations. Patch off is compared
+with main off; patch progressive and upfront are compared with main progressive.
+All 240 executions succeeded and returned ten rows. The benchmark records row
+counts; result values were not independently compared.
+
+<details>
+<summary>Exact median ClickBench times in milliseconds</summary>
+
+### Pass 1
+
+| Query | Main off | Patch off | Main progressive | Patch progressive | Patch upfront |
+| ----- | -------: | --------: | ---------------: | ----------------: | ------------: |
+| Q10   |     5.06 |      5.19 |             5.79 |              5.11 |          5.59 |
+| Q11   |     4.97 |      4.89 |             5.81 |              5.76 |          5.74 |
+| Q22   |    93.88 |     91.93 |           110.93 |            108.74 |        110.14 |
+| Q24   |     8.11 |      7.59 |            10.00 |              9.62 |          8.92 |
+| Q25   |     5.11 |      4.87 |             6.76 |              7.05 |          7.42 |
+| Q26   |     8.36 |      8.29 |            12.63 |             11.12 |         12.05 |
+
+### Pass 2
+
+| Query | Main off | Patch off | Main progressive | Patch progressive | Patch upfront |
+| ----- | -------: | --------: | ---------------: | ----------------: | ------------: |
+| Q10   |     4.21 |      4.25 |             5.05 |              5.06 |          4.63 |
+| Q11   |     5.13 |      5.19 |             5.48 |              5.15 |          5.04 |
+| Q22   |    84.72 |     83.33 |           102.40 |            103.86 |        103.36 |
+| Q24   |     7.18 |      7.15 |            10.15 |              8.97 |          8.75 |
+| Q25   |     4.85 |      4.93 |             7.09 |              6.87 |          6.64 |
+| Q26   |     7.42 |      7.37 |            10.19 |              9.93 |          9.63 |
+
+</details>
+
+These local samples do not establish full-dataset, remote-storage, or Spark
+end-to-end performance. Timing differences include all changes between the two
+revisions; broader measurements are needed before changing defaults.
 
 ## Reproduce
 
+Build both runners using the same Rust toolchain and profile:
+
 ```sh
-cargo run --profile release-nonlto -p datafusion-datasource-parquet \
-  --example io_policy -- 256 > io-policy.csv
+cargo build --locked --profile release-nonlto \
+  -p datafusion-datasource-parquet --example io_policy \
+  -p datafusion-benchmarks --bin dfbench
 ```
 
-The example creates four local Snappy Parquet files in a temporary directory,
-using 256 row groups of 131,072 rows and eight Int64 columns per file. That is
-33,554,432 rows and 2 GiB of logical values per file. Files are generated and
-measured one at a time; generation is outside the timed region.
+For main, copy the benchmark example from the patch, remove the
+`with_row_group_prefetch` and `with_progressive_io` builder calls, and restrict
+the configuration loop to off/progressive without prefetch. Enable Tokio's
+`rt-multi-thread` feature in the Parquet crate's dev dependencies.
 
-The six configurations are pushdown off, pushdown with progressive fetching, and
-pushdown with upfront fetching, each with prefetch off/on. The prefetch budget is
-16 MiB. Every configuration evaluates the same predicate (`c1 < 10000`) and returns
-the same columns. Pushdown-off plans retain a physical `FilterExec` before the
-output projection. All configurations retain statistics and page-index pruning.
-
-Each configuration runs against both scattered and page-clustered matches, with
-and without column/offset indexes, and with either one or seven output columns.
-The filter column is omitted from the output in every case. Writer metadata
-assertions verify index presence/absence. Expected row counts and checksums are
-calculated during generation and checked on every scan.
-
-Round zero warms every configuration. The report uses medians of rounds 1–3,
-rotating the order of all six configurations each round. The measured region
-includes plan execution, decoding, filtering, and summing every output value.
-There is no artificial I/O or downstream delay. These are warm local-file results;
-they do not establish Spark end-to-end or remote-storage speedups.
-
-`bytes_scanned` counts requested bytes, including metadata and speculative reads.
-`reader_calls` and `reader_ranges` count calls/ranges observed by the reader wrapper,
-excluding reads internal to `get_metadata`; they are not physical disk operations
-or HTTP request counts. `prefetch_peak` uses DataFusion's existing `PeakRecordingPool` to record peak prefetch reservations. It does not measure current-reader, decoded-buffer, or total process memory. `prefetch_bytes` and `prefetch_row_groups` count completed
-speculative reads, including bytes subsequently discarded.
-
-## Page-selection revision (2026-09-10)
-
-Apple M4, 10 CPU cores, 24 GiB RAM; Rust 1.97.0, Arrow/Parquet 59.2.0,
-`release-nonlto`, two Tokio workers for the synthetic matrix.
-
-The same 256-group matrix was rerun after preserving page selections. All 192 scans passed the independent row-count/checksum assertions. In all eight workloads and all six policies, requested byte counts now match the pushdown-off control, including prefetch. This equality is specific to this predicate-only fixture; row-filter selectivity, dictionary layout, and predicate-cache expansion can change the comparison in other queries.
-
-![Current policy timing ratios.](benchmark-charts/parquet-pages-timings.png)
-
-![Earlier whole-chunk versus current page-selected requested bytes.](benchmark-charts/parquet-pages-bytes.png)
-
-<details>
-<summary>Current medians in milliseconds</summary>
-
-| Workload                      |    Off | Off +PF | Progressive | Progressive +PF | Upfront | Upfront +PF |
-| ----------------------------- | -----: | ------: | ----------: | --------------: | ------: | ----------: |
-| random, no indexes, wide      | 1494.4 |  1385.7 |      1512.0 |          1407.6 |  1516.2 |      1422.4 |
-| random, no indexes, narrow    |  355.7 |   330.7 |       354.3 |           325.6 |   349.9 |       325.2 |
-| random, indexes, wide         | 1500.1 |  1390.5 |      1715.8 |          1430.7 |  1534.6 |      1429.2 |
-| random, indexes, narrow       |  356.8 |   344.4 |       378.9 |           332.8 |   355.3 |       332.4 |
-| clustered, no indexes, wide   | 1479.3 |  1383.7 |       299.4 |           289.8 |   290.0 |       288.2 |
-| clustered, no indexes, narrow |  340.2 |   318.5 |       208.1 |           203.2 |   205.7 |       202.7 |
-| clustered, indexes, wide      |   44.4 |    37.8 |        47.5 |            36.0 |    42.1 |        36.0 |
-| clustered, indexes, narrow    |   21.3 |    18.9 |        25.7 |            22.5 |    20.9 |        22.5 |
-
-</details>
-
-<details>
-<summary>Current requested bytes and reader calls (prefetch off)</summary>
-
-| Workload                      | Bytes (all policies) | Off calls | Progressive calls | Upfront calls |
-| ----------------------------- | -------------------: | --------: | ----------------: | ------------: |
-| random, no indexes, wide      |        1,309,357,880 |       256 |               512 |           256 |
-| random, no indexes, narrow    |          303,126,105 |       256 |               512 |           256 |
-| random, indexes, wide         |        1,318,274,373 |       257 |               513 |           257 |
-| random, indexes, narrow       |          312,042,598 |       257 |               513 |           257 |
-| clustered, no indexes, wide   |        1,278,042,437 |       256 |               512 |           256 |
-| clustered, no indexes, narrow |          271,810,662 |       256 |               512 |           256 |
-| clustered, indexes, wide      |           28,883,141 |       257 |               513 |           257 |
-| clustered, indexes, narrow    |           13,160,491 |       257 |               513 |           257 |
-
-</details>
-
-All 255 future groups fit the 16 MiB prefetch budget. Peak compressed prefetch
-reservations were 4.99–5.12 MB for wide output and 1.06–1.18 MB for narrow output
-without effective page pruning. With indexed, clustered matches, the peaks fell
-to 78,078 bytes (wide) and 16,587 bytes (narrow). These are exact reservation
-peaks from `PeakRecordingPool`; current-reader, decoded-buffer, and process
-memory are outside this measurement.
-
-<details>
-<summary>Fresh unmodified DF55 control, prefetch off (milliseconds)</summary>
-
-| Workload                      | Baseline off | Current off | Baseline progressive | Current progressive |
-| ----------------------------- | -----------: | ----------: | -------------------: | ------------------: |
-| random, no indexes, wide      |       1493.3 |      1494.4 |               1503.0 |              1512.0 |
-| random, no indexes, narrow    |        354.9 |       355.7 |                356.1 |               354.3 |
-| random, indexes, wide         |       1494.1 |      1500.1 |               1712.8 |              1715.8 |
-| random, indexes, narrow       |        359.9 |       356.8 |                378.2 |               378.9 |
-| clustered, no indexes, wide   |       1497.1 |      1479.3 |                302.2 |               299.4 |
-| clustered, no indexes, narrow |        343.7 |       340.2 |                209.5 |               208.1 |
-| clustered, indexes, wide      |         44.6 |        44.4 |                 47.5 |                47.5 |
-| clustered, indexes, narrow    |         21.1 |        21.3 |                 25.4 |                25.7 |
-
-</details>
-
-The baseline rerun uses the unchanged DF55 executable described below and passed all 64 scan assertions. The current matrix ran before the baseline, with no builds from this task running during either measurement. These are local desktop samples, not evidence that the defaults have zero overhead or that the wider performance epic is resolved.
-
-### Reported ClickBench query regressions
-
-The existing `dfbench clickbench` runner executed the unchanged Q10, Q11, Q22,
-Q24, Q25, and Q26 query files referenced by the regression work in
-[#20324](https://github.com/apache/datafusion/issues/20324). Input was the public
-[`hits_0.parquet`](https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_0.parquet)
-partition: 122,446,530 bytes, 1,000,000 rows, two row groups. This covers one
-partition of the 100-file dataset. Target partitions were set to one, filter
-reordering was enabled in every case, and next-row-group prefetch was disabled.
-
-Each case ran four iterations. The table and chart use the median of iterations
-1–3, after the first warmup. The second pass reversed the policy order. All 144
-executions succeeded and returned ten rows. The benchmark records row counts;
-result values were not independently compared. The SQL reader
-regression test separately checks values across all 48 policy/data combinations.
-
-![ClickBench progressive and upfront timings relative to pushdown off, in two passes.](benchmark-charts/parquet-pages-clickbench.png)
-
-Q11, Q22, Q24, Q25, and Q26 remained slower with upfront I/O in both passes.
-For example, Q25 upfront medians were 6.55 and 7.36 ms, versus 4.86 ms with
-pushdown off in each pass. Changing the I/O policy alone does not remove these
-observed slowdowns. The small local sample does not identify their cause;
-full-dataset measurements and profiling remain necessary before changing defaults.
-
-<details>
-<summary>ClickBench medians in milliseconds</summary>
-
-| Query | Off, first | Progressive, first | Upfront, first | Off, repeat | Progressive, repeat | Upfront, repeat |
-| ----- | ---------: | -----------------: | -------------: | ----------: | ------------------: | --------------: |
-| Q10   |       5.06 |               5.00 |           5.01 |        4.22 |                4.13 |            4.44 |
-| Q11   |       5.03 |               5.83 |           5.90 |        4.76 |                5.26 |            5.08 |
-| Q22   |      90.53 |             101.25 |         100.25 |       83.56 |              102.69 |          100.46 |
-| Q24   |       6.87 |               8.79 |           8.66 |        7.30 |                8.73 |            9.23 |
-| Q25   |       4.86 |               6.77 |           6.55 |        4.86 |                6.69 |            7.36 |
-| Q26   |       7.02 |               9.63 |           9.18 |        7.08 |                9.94 |            9.81 |
-
-</details>
-
-Example command for upfront Q10, using the same build profile as the matrix:
+Run the patch first to generate the shared input directory, then use that same
+absolute directory for both binaries. Repeat in the opposite revision order.
 
 ```sh
-cargo build --profile release-nonlto -p datafusion-benchmarks --bin dfbench
-curl -LO https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_0.parquet
+target/release-nonlto/examples/io_policy 256 /tmp/io-policy-data > io-policy.csv
+```
+
+For ClickBench, use the same query directory and input file in both checkouts:
+
+```sh
 target/release-nonlto/dfbench clickbench --path hits_0.parquet \
   --queries-path benchmarks/queries/clickbench/queries --query 10 \
   --iterations 4 --partitions 1 --pushdown \
-  -c datafusion.execution.parquet.reorder_filters=true \
-  -c datafusion.execution.parquet.progressive_io=false
+  -c datafusion.execution.parquet.reorder_filters=true
 ```
 
-Use `progressive_io=true` for progressive reads. For the off control, omit
-`--pushdown` and set `datafusion.execution.parquet.pushdown_filters=false`.
-Repeat for query numbers 10, 11, 22, 24, 25, and 26.
-
-## Earlier measurements: whole-chunk implementation (2026-09-09)
-
-These historical results describe commit `943ddfc20`, before the page-selection
-fix above. The 21–45× byte amplification below is the regression this revision
-addresses; it must not be attributed to the current implementation.
-
-<details>
-<summary>Earlier charts, timings, and baseline controls</summary>
-
-Apple M4, 10 CPU cores, 24 GiB RAM, Rust 1.97.0, `release-nonlto`, two Tokio worker threads. Implementation: [`943ddfc20`](https://github.com/peterxcli/datafusion/commit/943ddfc209147ebd8022853482009c2827d77b59). The four files are approximately 1.29–1.32 GB compressed each. All 384 scans across two complete patched runs and all 64 baseline scans passed the independent row-count and checksum assertions, including warmups.
-
-Each plotted value is a median of three measured scans. `+PF` means a 16 MiB prefetch budget. Both runs are shown because timings moved substantially even though no other build from this experiment ran during measurement. Other desktop activity was uncontrolled. These measurements support the I/O tradeoff; they do not establish a stable overall speedup or zero overhead with the options disabled.
-
-### Timing comparison
-
-Each panel uses the same logarithmic scale. **1× is progressive fetching without prefetch in that workload and run**; points to the left are faster, points to the right are slower. Normalizing each run makes policy differences visible across workloads, but hides absolute timing drift; the unmodified DF55 comparison below shows that separately.
-
-![Six-policy elapsed-time comparison across eight workloads. Blue circles show the first run and orange triangles the repeat, relative to progressive fetching without prefetch.](benchmark-charts/parquet-policy-timings.png)
-
-<details>
-<summary>Exact timing medians in milliseconds: first and repeat runs</summary>
-
-### First run
-
-| Data                          |    Off | Off +PF | Progressive | Progressive +PF | Upfront | Upfront +PF |
-| ----------------------------- | -----: | ------: | ----------: | --------------: | ------: | ----------: |
-| random, no indexes, wide      | 1856.0 |  1693.7 |      1845.9 |          1646.1 |  1717.3 |      1551.5 |
-| random, no indexes, narrow    |  365.9 |   337.5 |       379.3 |           334.8 |   360.2 |       331.5 |
-| random, indexes, wide         | 1654.3 |  1548.9 |      1772.4 |          1459.7 |  1586.5 |      1460.5 |
-| random, indexes, narrow       |  436.3 |   366.2 |       489.2 |           362.6 |   399.5 |       415.8 |
-| clustered, no indexes, wide   | 1807.7 |  1627.7 |       375.3 |           353.2 |   357.0 |       315.4 |
-| clustered, no indexes, narrow |  351.3 |   327.5 |       217.3 |           213.2 |   210.5 |       210.8 |
-| clustered, indexes, wide      |   46.1 |   117.8 |        48.5 |           118.9 |   132.8 |       116.0 |
-| clustered, indexes, narrow    |   21.3 |    35.8 |        25.8 |            39.9 |    38.9 |        39.8 |
-
-### Repeat run
-
-| Data                          |    Off | Off +PF | Progressive | Progressive +PF | Upfront | Upfront +PF |
-| ----------------------------- | -----: | ------: | ----------: | --------------: | ------: | ----------: |
-| random, no indexes, wide      | 1729.8 |  1499.5 |      1655.6 |          1498.1 |  1642.4 |      1542.2 |
-| random, no indexes, narrow    |  416.2 |   371.6 |       404.0 |           347.8 |   411.2 |       371.0 |
-| random, indexes, wide         | 1841.6 |  1698.7 |      2374.9 |          1620.4 |  1798.1 |      1638.5 |
-| random, indexes, narrow       |  528.4 |   473.3 |       556.2 |           483.0 |   508.3 |       480.6 |
-| clustered, no indexes, wide   | 2099.7 |  1916.2 |       450.0 |           466.4 |   445.9 |       462.4 |
-| clustered, no indexes, narrow |  369.0 |   353.3 |       298.8 |           275.6 |   245.6 |       255.0 |
-| clustered, indexes, wide      |   48.0 |   131.5 |        50.6 |           131.8 |   152.2 |       133.7 |
-| clustered, indexes, narrow    |   22.5 |    40.3 |        26.3 |            44.1 |    41.2 |        43.2 |
-
-</details>
-
-### Unmodified DataFusion 55 control
-
-The baseline is [`d55523420`](https://github.com/peterxcli/datafusion/commit/d55523420), the fork's `codex/df55-base`. It uses the same benchmark harness, compiler/profile, dependency lock versions, and two-worker runtime, with only the new builder calls removed and the configurations restricted to off/progressive without prefetch. It ran after the first patched matrix and before the repeat. The table compares the progressive configuration without prefetch in all three runs.
-
-![Patched progressive reads without prefetch compared with unmodified DataFusion 55. Most points exceed 1x, and first-run and repeat ratios differ.](benchmark-charts/parquet-policy-baseline.png)
-
-<details>
-<summary>Exact baseline timing medians in milliseconds</summary>
-
-| Data                          |  DF 55 | Patched first | Patched repeat |
-| ----------------------------- | -----: | ------------: | -------------: |
-| random, no indexes, wide      | 1537.6 |        1845.9 |         1655.6 |
-| random, no indexes, narrow    |  358.5 |         379.3 |          404.0 |
-| random, indexes, wide         | 1763.0 |        1772.4 |         2374.9 |
-| random, indexes, narrow       |  380.9 |         489.2 |          556.2 |
-| clustered, no indexes, wide   |  308.7 |         375.3 |          450.0 |
-| clustered, no indexes, narrow |  210.8 |         217.3 |          298.8 |
-| clustered, indexes, wide      |   50.4 |          48.5 |           50.6 |
-| clustered, indexes, narrow    |   25.6 |          25.8 |           26.3 |
-
-</details>
-
-Several disabled-option controls were slower than unmodified DF 55, and the repeat also moved substantially. This experiment cannot distinguish code overhead from machine/load drift. A stable machine with interleaved baseline/patch trials is required before claiming an end-to-end improvement or promoting defaults.
-
-### Reader I/O and memory
-
-The following counts are from the first run, without prefetch. Byte counts include metadata. Calls and ranges have the wrapper scope described above.
-
-![Progressive and upfront requested bytes for all eight workloads. Indexed clustered data reads 44.6x more bytes for wide output and 21.3x more for narrow output with upfront fetching.](benchmark-charts/parquet-policy-io.png)
-
-<details>
-<summary>Exact requested bytes, reader calls, and logical ranges</summary>
-
-| Data                          | Progressive bytes | Upfront bytes | Progressive calls / ranges | Upfront calls / ranges |
-| ----------------------------- | ----------------: | ------------: | -------------------------: | ---------------------: |
-| random, no indexes, wide      |     1,309,357,880 | 1,309,357,880 |                 512 / 2048 |             256 / 2048 |
-| random, no indexes, narrow    |       303,126,105 |   303,126,105 |                  512 / 512 |              256 / 512 |
-| random, indexes, wide         |     1,318,274,373 | 1,318,274,373 |               513 / 229633 |             257 / 2049 |
-| random, indexes, narrow       |       312,042,598 |   312,042,598 |                513 / 33025 |              257 / 513 |
-| clustered, no indexes, wide   |     1,278,042,437 | 1,278,042,437 |                 512 / 2048 |             256 / 2048 |
-| clustered, no indexes, narrow |       271,810,662 |   271,810,662 |                  512 / 512 |              256 / 512 |
-| clustered, indexes, wide      |        28,883,141 | 1,286,958,261 |                 513 / 4097 |             257 / 2049 |
-| clustered, indexes, narrow    |        13,160,491 |   280,726,486 |                 513 / 1025 |              257 / 513 |
-
-</details>
-
-For random matches without indexes, upfront reads reduce 512 reader calls to 256 while fetching the same bytes. With indexes, batching also removes the many small selected-page ranges. For indexed clustered matches, progressive fetching reads only selected pages: upfront reads instead fetch **44.6×** as many bytes for wide output and **21.3×** for narrow output. The wide upfront configurations take approximately 2.4–3.0× the progressive time across these runs.
-
-To isolate overlap, compare **Upfront** with **Upfront +PF**, which fetch the same chunks. For random wide output without indexes, prefetch reduced the median from 1717.3 to 1551.5 ms (9.7%) in the first run and from 1642.4 to 1542.2 ms (6.1%) in the repeat. This is evidence of potential overlap benefit in this local workload, with the baseline and timing caveats above. Some cases regress: clustered wide output without indexes improved by 11.6% in the first run but regressed by 3.7% in the repeat.
-
-All groups fit the 16 MiB prefetch budget in this fixture; 255 future groups were prefetched. Peak compressed prefetch reservations were about 5.1 MB for wide output and 1.1 MB for narrow output. These are exact reservation peaks from `PeakRecordingPool`, not total reader/process memory. Upfront demand allocations are outside that prefetch reservation.
-
-The full-chunk prefetch strategy loses much of page pruning's byte savings even when progressive demand reads are selected. Both options therefore remain opt-in. A remote-object-store benchmark with real latency, bandwidth limits, backend request counters, and concurrent scans is still needed before an upstream performance claim.
-
-</details>
+On the patch, add `-c datafusion.execution.parquet.progressive_io=false` for
+upfront reads. For the off control on either revision, omit `--pushdown` and add
+`-c datafusion.execution.parquet.pushdown_filters=false`. Repeat for query numbers
+10, 11, 22, 24, 25, and 26, then reverse the configuration order.
