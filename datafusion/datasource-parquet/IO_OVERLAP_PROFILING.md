@@ -25,6 +25,9 @@ decoding on the same Tokio worker. Yielding once after successfully scheduling
 the next row group removes most of that wait. This is a five-line production
 change; prefetch depth and memory limits stay the same.
 
+The [Linux follow-up on chia-ping-aws1](IO_OVERLAP_AWS.md) repeats this comparison
+with Rust 1.97.0 and includes Linux scheduler timelines and all query results.
+
 ## What was measured
 
 The baseline is [PR head `a8f744db6`](https://github.com/peterxcli/datafusion/commit/a8f744db6bf6f147e2ea88fcf03e0f0b977f4683),
