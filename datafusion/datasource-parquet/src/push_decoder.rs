@@ -795,6 +795,11 @@ impl PushDecoderStreamState {
                                     Arc::clone(&self.reader),
                                     &self.prefetch_metrics,
                                 );
+                                if self.pending_prefetch.is_some() {
+                                    // Let the I/O task start before this worker
+                                    // continues decoding or consuming batches.
+                                    tokio::task::yield_now().await;
+                                }
                             }
                             Ok(None) => {}
                             Err(e) => return Some((Err(e.into()), self)),
@@ -1239,6 +1244,45 @@ mod tests {
             .collect();
         assert_eq!(values, (0..3000).collect::<Vec<_>>());
         assert_pool_released(&pool).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn prefetch_starts_while_consumer_uses_worker() {
+        use datafusion_common::instant::Instant;
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        use std::sync::atomic::Ordering;
+
+        SpawnedTask::spawn(async {
+            let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
+            let control = Arc::new(ReadControl {
+                block_second: true,
+                ..Default::default()
+            });
+            let mut stream = prefetch_test_stream(
+                1 << 20,
+                Arc::clone(&pool),
+                Arc::clone(&control),
+                None,
+                None,
+            );
+            stream.next().await.unwrap().unwrap();
+            // A consumer can keep doing CPU work after receiving a batch.
+            // Waiting on a Notify here would yield and hide a delayed I/O start.
+            let deadline = Instant::now() + std::time::Duration::from_millis(100);
+            while control.calls.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+                std::hint::spin_loop();
+            }
+            assert_eq!(
+                control.calls.load(Ordering::SeqCst),
+                2,
+                "prefetch must start while the consumer is using a runtime worker"
+            );
+            drop(stream);
+            assert_pool_released(&pool).await;
+        })
+        .join_unwind()
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

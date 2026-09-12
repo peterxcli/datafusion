@@ -17,9 +17,9 @@
   under the License.
 -->
 
-# Parquet I/O benchmarks: current patch versus upstream main
+# Parquet I/O benchmarks: September 10 patch versus upstream main
 
-These measurements compare the current patch with upstream `main` fetched on
+These measurements compare reader implementation `801cb0e52` with upstream `main` fetched on
 2026-09-10. Both use Rust 1.97.0 and the `release-nonlto` profile on an Apple M4
 with 10 CPU cores and 24 GiB RAM.
 
@@ -27,6 +27,10 @@ with 10 CPU cores and 24 GiB RAM.
 | ----------------------------------------------------------------------------------------------------------------- | ---------- | ------------- |
 | [Upstream main `408696966`](https://github.com/apache/datafusion/commit/4086969669f96c0d5de03f442f2dba1869d2ee80) | 55.0.0     | 59.3.0        |
 | [Current reader implementation `801cb0e52`](https://github.com/peterxcli/datafusion/commit/801cb0e52)             | 55.0.0     | 59.3.0        |
+
+The later [whole-query CPU/I/O profile](IO_OVERLAP_PROFILING.md) found and fixed a
+Tokio scheduling delay that this reader-only harness did not expose. The timings
+below precede that fix.
 
 The patch is rebased onto the measured upstream commit. Both revisions use
 the same dependency lockfile, with Arrow/Parquet 59.3.0.
