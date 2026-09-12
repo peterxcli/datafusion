@@ -817,6 +817,9 @@ pub struct ParquetOptions {
     /// default = false
     #[prost(bool, tag = "5")]
     pub pushdown_filters: bool,
+    /// absent defaults to true for older plans
+    #[prost(bool, optional, tag = "39")]
+    pub progressive_io: ::core::option::Option<bool>,
     /// default = false
     #[prost(bool, tag = "6")]
     pub reorder_filters: bool,

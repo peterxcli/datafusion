@@ -1,0 +1,303 @@
+[
+  {
+    "query_id": 0,
+    "label": "Q01",
+    "file": "q0.sql",
+    "sha256": "894123a33db30e4669c88dc22155efb9acd97001dee375fe8d1d7f3a4313d1b6",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n\n-- set datafusion.execution.parquet.binary_as_string = true\nSELECT COUNT(*) FROM hits;\n"
+  },
+  {
+    "query_id": 1,
+    "label": "Q02",
+    "file": "q1.sql",
+    "sha256": "e75a09935f99c983eace17c1368ab7436bc10162234699b49317d31f9bfeadf1",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT COUNT(*) FROM hits WHERE \"AdvEngineID\" <> 0;\n"
+  },
+  {
+    "query_id": 2,
+    "label": "Q03",
+    "file": "q2.sql",
+    "sha256": "8c78b05581253322f835025425e4c44190afe5929a935e9e010045449c6595f6",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT SUM(\"AdvEngineID\"), COUNT(*), AVG(\"ResolutionWidth\") FROM hits;\n"
+  },
+  {
+    "query_id": 3,
+    "label": "Q04",
+    "file": "q3.sql",
+    "sha256": "065b0fa0e926cddd2750669e63d7ed248b8e30f294cefa01a5692d1a16a65ec1",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT AVG(\"UserID\") FROM hits;\n"
+  },
+  {
+    "query_id": 4,
+    "label": "Q05",
+    "file": "q4.sql",
+    "sha256": "bd4563ed9f985f888737e45da7558d4fd3f02a34a4ebb955737f7e2b4a0bad0c",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT COUNT(DISTINCT \"UserID\") FROM hits;\n"
+  },
+  {
+    "query_id": 5,
+    "label": "Q06",
+    "file": "q5.sql",
+    "sha256": "1e961df9f1029be3f4dd7d89e52b0e51f39e2ac0fcd98b6f9d8209ed6f990460",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT COUNT(DISTINCT \"SearchPhrase\") FROM hits;\n"
+  },
+  {
+    "query_id": 6,
+    "label": "Q07",
+    "file": "q6.sql",
+    "sha256": "292e1806e40bec432bd081916b2bbb6e78691c67adae426cbff1a27f9ada2bb4",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT MIN(\"EventDate\"), MAX(\"EventDate\") FROM hits;\n"
+  },
+  {
+    "query_id": 7,
+    "label": "Q08",
+    "file": "q7.sql",
+    "sha256": "7e2597414c4bdb33936899ca3ac0828b526f0de2d1318997106ecf260ec82ccd",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"AdvEngineID\", COUNT(*) FROM hits WHERE \"AdvEngineID\" <> 0 GROUP BY \"AdvEngineID\" ORDER BY COUNT(*) DESC;\n"
+  },
+  {
+    "query_id": 8,
+    "label": "Q09",
+    "file": "q8.sql",
+    "sha256": "ffa3db67fc93c877fa0884afab677343743ac0eacbdddf0388be4d94acbbce30",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"RegionID\", COUNT(DISTINCT \"UserID\") AS u FROM hits GROUP BY \"RegionID\" ORDER BY u DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 9,
+    "label": "Q10",
+    "file": "q9.sql",
+    "sha256": "359391d96719281addae294da6bdadfd64e80ede5f43efef3391f23bb0eb1ef2",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"RegionID\", SUM(\"AdvEngineID\"), COUNT(*) AS c, AVG(\"ResolutionWidth\"), COUNT(DISTINCT \"UserID\") FROM hits GROUP BY \"RegionID\" ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 10,
+    "label": "Q11",
+    "file": "q10.sql",
+    "sha256": "dd9d7b2b3d74d5910be06e78c02df67725886c333ff9c66587c4c09a82b612be",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"MobilePhoneModel\", COUNT(DISTINCT \"UserID\") AS u FROM hits WHERE \"MobilePhoneModel\" <> '' GROUP BY \"MobilePhoneModel\" ORDER BY u DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 11,
+    "label": "Q12",
+    "file": "q11.sql",
+    "sha256": "b2b0deb90cc145b3ba8a9ee62591a04e054da26117c5ef5f84628dc23361b65a",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"MobilePhone\", \"MobilePhoneModel\", COUNT(DISTINCT \"UserID\") AS u FROM hits WHERE \"MobilePhoneModel\" <> '' GROUP BY \"MobilePhone\", \"MobilePhoneModel\" ORDER BY u DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 12,
+    "label": "Q13",
+    "file": "q12.sql",
+    "sha256": "2fd5a28547b4945fabd5fa0bb1a64bddb72b97457026298b972a252d790906bd",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"SearchPhrase\", COUNT(*) AS c FROM hits WHERE \"SearchPhrase\" <> '' GROUP BY \"SearchPhrase\" ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 13,
+    "label": "Q14",
+    "file": "q13.sql",
+    "sha256": "bb51b5617aa890044b18e8d89902fa5e9bf21b7df47744389447d70c950973cf",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"SearchPhrase\", COUNT(DISTINCT \"UserID\") AS u FROM hits WHERE \"SearchPhrase\" <> '' GROUP BY \"SearchPhrase\" ORDER BY u DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 14,
+    "label": "Q15",
+    "file": "q14.sql",
+    "sha256": "90ba5d29d6f6e57df66a0e447543587c500111b8dd2d0012fc09d015850ab363",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"SearchEngineID\", \"SearchPhrase\", COUNT(*) AS c FROM hits WHERE \"SearchPhrase\" <> '' GROUP BY \"SearchEngineID\", \"SearchPhrase\" ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 15,
+    "label": "Q16",
+    "file": "q15.sql",
+    "sha256": "45c1784390fb1fdc8a762f464a61623b6aee918e0017dfaba36af376e46016d5",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"UserID\", COUNT(*) FROM hits GROUP BY \"UserID\" ORDER BY COUNT(*) DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 16,
+    "label": "Q17",
+    "file": "q16.sql",
+    "sha256": "448e6b7082a7372d4e3ec1bd79a9d70ec24cd3aa080bae4c0fa450077fa69d18",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"UserID\", \"SearchPhrase\", COUNT(*) FROM hits GROUP BY \"UserID\", \"SearchPhrase\" ORDER BY COUNT(*) DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 17,
+    "label": "Q18",
+    "file": "q17.sql",
+    "sha256": "35f87b77555d186495d7931f89d6f47120804811d7bf601fa8d98b81a8153bff",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"UserID\", \"SearchPhrase\", COUNT(*) FROM hits GROUP BY \"UserID\", \"SearchPhrase\" LIMIT 10;\n"
+  },
+  {
+    "query_id": 18,
+    "label": "Q19",
+    "file": "q18.sql",
+    "sha256": "c70231161a8b18f4c57c9c11b23ac650a627a49331cc2ff288f445fb3c528909",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"UserID\", extract(minute FROM to_timestamp_seconds(\"EventTime\")) AS m, \"SearchPhrase\", COUNT(*) FROM hits GROUP BY \"UserID\", m, \"SearchPhrase\" ORDER BY COUNT(*) DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 19,
+    "label": "Q20",
+    "file": "q19.sql",
+    "sha256": "44727961e0d29b25933f0037efe6deceac6b9297fe33f754f1ab7567efc002a5",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"UserID\" FROM hits WHERE \"UserID\" = 435090932899640449;\n"
+  },
+  {
+    "query_id": 20,
+    "label": "Q21",
+    "file": "q20.sql",
+    "sha256": "5c7b35f2112877ef25d2ef28f369c4a55701552f410f1ba0dcfd1712678945c9",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT COUNT(*) FROM hits WHERE \"URL\" LIKE '%google%';\n"
+  },
+  {
+    "query_id": 21,
+    "label": "Q22",
+    "file": "q21.sql",
+    "sha256": "da828bbbe17b703e160e3c66824b9172a8016a56d98b8fbaba4eefa4e9217b72",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"SearchPhrase\", MIN(\"URL\"), COUNT(*) AS c FROM hits WHERE \"URL\" LIKE '%google%' AND \"SearchPhrase\" <> '' GROUP BY \"SearchPhrase\" ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 22,
+    "label": "Q23",
+    "file": "q22.sql",
+    "sha256": "8c1e14d9781dc7d62173eae45546b351fb3036902696724cda83c7c79d1595c9",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"SearchPhrase\", MIN(\"URL\"), MIN(\"Title\"), COUNT(*) AS c, COUNT(DISTINCT \"UserID\") FROM hits WHERE \"Title\" LIKE '%Google%' AND \"URL\" NOT LIKE '%.google.%' AND \"SearchPhrase\" <> '' GROUP BY \"SearchPhrase\" ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 23,
+    "label": "Q24",
+    "file": "q23.sql",
+    "sha256": "c18adefe3a5111e78b9cb434f7dd46ee58db4a04868e241aae0ec637722ae529",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT * FROM hits WHERE \"URL\" LIKE '%google%' ORDER BY \"EventTime\" LIMIT 10;\n"
+  },
+  {
+    "query_id": 24,
+    "label": "Q25",
+    "file": "q24.sql",
+    "sha256": "83b60b22e1f8df17acfa60f90172787b895f396b60455ad6d1c956da47e3fcbf",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"SearchPhrase\" FROM hits WHERE \"SearchPhrase\" <> '' ORDER BY \"EventTime\" LIMIT 10;\n"
+  },
+  {
+    "query_id": 25,
+    "label": "Q26",
+    "file": "q25.sql",
+    "sha256": "9c9ea179124fbfa2b13fb0cbccfb900ffee81338c7dfa486f5849995c65da28a",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"SearchPhrase\" FROM hits WHERE \"SearchPhrase\" <> '' ORDER BY \"SearchPhrase\" LIMIT 10;\n"
+  },
+  {
+    "query_id": 26,
+    "label": "Q27",
+    "file": "q26.sql",
+    "sha256": "764440af444952680ba2e1f3d921a261779ead8e5c82450c31bc6b98ff022222",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"SearchPhrase\" FROM hits WHERE \"SearchPhrase\" <> '' ORDER BY \"EventTime\", \"SearchPhrase\" LIMIT 10;\n"
+  },
+  {
+    "query_id": 27,
+    "label": "Q28",
+    "file": "q27.sql",
+    "sha256": "025172a6eb3d653cc86cdfa933e0ce1d1bb4a3682a83205fadd563dd7520b01c",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\n-- DataFusion length(...) counts characters; use octet_length(...) for ClickBench byte-length semantics.\nSELECT \"CounterID\", AVG(octet_length(\"URL\")) AS l, COUNT(*) AS c FROM hits WHERE \"URL\" <> '' GROUP BY \"CounterID\" HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25;\n"
+  },
+  {
+    "query_id": 28,
+    "label": "Q29",
+    "file": "q28.sql",
+    "sha256": "51196d73fbca6fe8512d8e012d8c625710d82e0d7073a02f6488d1b77685218f",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\n-- DataFusion length(...) counts characters; use octet_length(...) for ClickBench byte-length semantics.\nSELECT REGEXP_REPLACE(\"Referer\", '^https?://(?:www\\.)?([^/]+)/.*$', '\\1') AS k, AVG(octet_length(\"Referer\")) AS l, COUNT(*) AS c, MIN(\"Referer\") FROM hits WHERE \"Referer\" <> '' GROUP BY k HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25;\n"
+  },
+  {
+    "query_id": 29,
+    "label": "Q30",
+    "file": "q29.sql",
+    "sha256": "9482b26a2ee5b557677217e5ba8042a740976544f46d62932b42af263850e71f",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT SUM(\"ResolutionWidth\"), SUM(\"ResolutionWidth\" + 1), SUM(\"ResolutionWidth\" + 2), SUM(\"ResolutionWidth\" + 3), SUM(\"ResolutionWidth\" + 4), SUM(\"ResolutionWidth\" + 5), SUM(\"ResolutionWidth\" + 6), SUM(\"ResolutionWidth\" + 7), SUM(\"ResolutionWidth\" + 8), SUM(\"ResolutionWidth\" + 9), SUM(\"ResolutionWidth\" + 10), SUM(\"ResolutionWidth\" + 11), SUM(\"ResolutionWidth\" + 12), SUM(\"ResolutionWidth\" + 13), SUM(\"ResolutionWidth\" + 14), SUM(\"ResolutionWidth\" + 15), SUM(\"ResolutionWidth\" + 16), SUM(\"ResolutionWidth\" + 17), SUM(\"ResolutionWidth\" + 18), SUM(\"ResolutionWidth\" + 19), SUM(\"ResolutionWidth\" + 20), SUM(\"ResolutionWidth\" + 21), SUM(\"ResolutionWidth\" + 22), SUM(\"ResolutionWidth\" + 23), SUM(\"ResolutionWidth\" + 24), SUM(\"ResolutionWidth\" + 25), SUM(\"ResolutionWidth\" + 26), SUM(\"ResolutionWidth\" + 27), SUM(\"ResolutionWidth\" + 28), SUM(\"ResolutionWidth\" + 29), SUM(\"ResolutionWidth\" + 30), SUM(\"ResolutionWidth\" + 31), SUM(\"ResolutionWidth\" + 32), SUM(\"ResolutionWidth\" + 33), SUM(\"ResolutionWidth\" + 34), SUM(\"ResolutionWidth\" + 35), SUM(\"ResolutionWidth\" + 36), SUM(\"ResolutionWidth\" + 37), SUM(\"ResolutionWidth\" + 38), SUM(\"ResolutionWidth\" + 39), SUM(\"ResolutionWidth\" + 40), SUM(\"ResolutionWidth\" + 41), SUM(\"ResolutionWidth\" + 42), SUM(\"ResolutionWidth\" + 43), SUM(\"ResolutionWidth\" + 44), SUM(\"ResolutionWidth\" + 45), SUM(\"ResolutionWidth\" + 46), SUM(\"ResolutionWidth\" + 47), SUM(\"ResolutionWidth\" + 48), SUM(\"ResolutionWidth\" + 49), SUM(\"ResolutionWidth\" + 50), SUM(\"ResolutionWidth\" + 51), SUM(\"ResolutionWidth\" + 52), SUM(\"ResolutionWidth\" + 53), SUM(\"ResolutionWidth\" + 54), SUM(\"ResolutionWidth\" + 55), SUM(\"ResolutionWidth\" + 56), SUM(\"ResolutionWidth\" + 57), SUM(\"ResolutionWidth\" + 58), SUM(\"ResolutionWidth\" + 59), SUM(\"ResolutionWidth\" + 60), SUM(\"ResolutionWidth\" + 61), SUM(\"ResolutionWidth\" + 62), SUM(\"ResolutionWidth\" + 63), SUM(\"ResolutionWidth\" + 64), SUM(\"ResolutionWidth\" + 65), SUM(\"ResolutionWidth\" + 66), SUM(\"ResolutionWidth\" + 67), SUM(\"ResolutionWidth\" + 68), SUM(\"ResolutionWidth\" + 69), SUM(\"ResolutionWidth\" + 70), SUM(\"ResolutionWidth\" + 71), SUM(\"ResolutionWidth\" + 72), SUM(\"ResolutionWidth\" + 73), SUM(\"ResolutionWidth\" + 74), SUM(\"ResolutionWidth\" + 75), SUM(\"ResolutionWidth\" + 76), SUM(\"ResolutionWidth\" + 77), SUM(\"ResolutionWidth\" + 78), SUM(\"ResolutionWidth\" + 79), SUM(\"ResolutionWidth\" + 80), SUM(\"ResolutionWidth\" + 81), SUM(\"ResolutionWidth\" + 82), SUM(\"ResolutionWidth\" + 83), SUM(\"ResolutionWidth\" + 84), SUM(\"ResolutionWidth\" + 85), SUM(\"ResolutionWidth\" + 86), SUM(\"ResolutionWidth\" + 87), SUM(\"ResolutionWidth\" + 88), SUM(\"ResolutionWidth\" + 89) FROM hits;\n"
+  },
+  {
+    "query_id": 30,
+    "label": "Q31",
+    "file": "q30.sql",
+    "sha256": "3d2137fea5f9686e1b4747914847f375d9300bd78d105c2e1062a211d07f4f59",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"SearchEngineID\", \"ClientIP\", COUNT(*) AS c, SUM(\"IsRefresh\"), AVG(\"ResolutionWidth\") FROM hits WHERE \"SearchPhrase\" <> '' GROUP BY \"SearchEngineID\", \"ClientIP\" ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 31,
+    "label": "Q32",
+    "file": "q31.sql",
+    "sha256": "7707983c90c90f6448812da14f628d7684871aca090ed0c3f922f93a663ea93d",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"WatchID\", \"ClientIP\", COUNT(*) AS c, SUM(\"IsRefresh\"), AVG(\"ResolutionWidth\") FROM hits WHERE \"SearchPhrase\" <> '' GROUP BY \"WatchID\", \"ClientIP\" ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 32,
+    "label": "Q33",
+    "file": "q32.sql",
+    "sha256": "122b52742be19db30ec6d03f7ef014c9f88e22a2cc80a7d8957b9b213c0e49c1",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"WatchID\", \"ClientIP\", COUNT(*) AS c, SUM(\"IsRefresh\"), AVG(\"ResolutionWidth\") FROM hits GROUP BY \"WatchID\", \"ClientIP\" ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 33,
+    "label": "Q34",
+    "file": "q33.sql",
+    "sha256": "b8e2aa04db69f2bf1b16d9e2c0fcd0c1c6f5ebaa1104c19196e83e77d1c97216",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"URL\", COUNT(*) AS c FROM hits GROUP BY \"URL\" ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 34,
+    "label": "Q35",
+    "file": "q34.sql",
+    "sha256": "58c1e54779275356399a9ba4b03d6e71ee57d34cbff8797d9bb122a62743839c",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT 1, \"URL\", COUNT(*) AS c FROM hits GROUP BY 1, \"URL\" ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 35,
+    "label": "Q36",
+    "file": "q35.sql",
+    "sha256": "2c56c899710cecd57761b2c0911b832b7c0b715945e13ec76cd181a0fe85b91a",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"ClientIP\", \"ClientIP\" - 1, \"ClientIP\" - 2, \"ClientIP\" - 3, COUNT(*) AS c FROM hits GROUP BY \"ClientIP\", \"ClientIP\" - 1, \"ClientIP\" - 2, \"ClientIP\" - 3 ORDER BY c DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 36,
+    "label": "Q37",
+    "file": "q36.sql",
+    "sha256": "69a19a88b210ced75267e1960dabda207214347cc9dfc4fb2aa3fdd0e9cd757f",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"URL\", COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"DontCountHits\" = 0 AND \"IsRefresh\" = 0 AND \"URL\" <> '' GROUP BY \"URL\" ORDER BY PageViews DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 37,
+    "label": "Q38",
+    "file": "q37.sql",
+    "sha256": "26583e0f84083befb3cdb5e8b50ce6b2db0afb9211dcdf8fd076edc5a30827f8",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"Title\", COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"DontCountHits\" = 0 AND \"IsRefresh\" = 0 AND \"Title\" <> '' GROUP BY \"Title\" ORDER BY PageViews DESC LIMIT 10;\n"
+  },
+  {
+    "query_id": 38,
+    "label": "Q39",
+    "file": "q38.sql",
+    "sha256": "f7675525037ec61fa5cfde0174927c31b56a1c561a8d85f7efc61ee9ff161e62",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"URL\", COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"IsRefresh\" = 0 AND \"IsLink\" <> 0 AND \"IsDownload\" = 0 GROUP BY \"URL\" ORDER BY PageViews DESC LIMIT 10 OFFSET 1000;\n"
+  },
+  {
+    "query_id": 39,
+    "label": "Q40",
+    "file": "q39.sql",
+    "sha256": "9fee44af2458b8538a6d4267726c4e98c7a308315fb7efdc7b59dfb27de04e72",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"TraficSourceID\", \"SearchEngineID\", \"AdvEngineID\", CASE WHEN (\"SearchEngineID\" = 0 AND \"AdvEngineID\" = 0) THEN \"Referer\" ELSE '' END AS Src, \"URL\" AS Dst, COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"IsRefresh\" = 0 GROUP BY \"TraficSourceID\", \"SearchEngineID\", \"AdvEngineID\", Src, Dst ORDER BY PageViews DESC LIMIT 10 OFFSET 1000;\n"
+  },
+  {
+    "query_id": 40,
+    "label": "Q41",
+    "file": "q40.sql",
+    "sha256": "717e7d69e8cad68232d56ed66ba136a1970e47c7aa0c0783c5b30ec815e4ca33",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT \"URLHash\", \"EventDate\", COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"IsRefresh\" = 0 AND \"TraficSourceID\" IN (-1, 6) AND \"RefererHash\" = 3594120000172545465 GROUP BY \"URLHash\", \"EventDate\" ORDER BY PageViews DESC LIMIT 10 OFFSET 100;\n"
+  },
+  {
+    "query_id": 41,
+    "label": "Q42",
+    "file": "q41.sql",
+    "sha256": "bcc0a63809c111d13878600afda86a7360a1548e5c1518a69ca90d5d3aeec322",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\nSELECT \"WindowClientWidth\", \"WindowClientHeight\", COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"IsRefresh\" = 0 AND \"DontCountHits\" = 0 AND \"URLHash\" = 2868770270353813622 GROUP BY \"WindowClientWidth\", \"WindowClientHeight\" ORDER BY PageViews DESC LIMIT 10 OFFSET 10000;\n"
+  },
+  {
+    "query_id": 42,
+    "label": "Q43",
+    "file": "q42.sql",
+    "sha256": "c5d6ca92459b3d9f22eb91530a1ac8d76cf03a686574c9f65bfe2af0be5ff2e6",
+    "sql": "-- Must set for ClickBench hits_partitioned dataset. See https://github.com/apache/datafusion/issues/16591\n-- set datafusion.execution.parquet.binary_as_string = true\n\nSELECT DATE_TRUNC('minute', to_timestamp_seconds(\"EventTime\")) AS M, COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-14' AND \"EventDate\" <= '2013-07-15' AND \"IsRefresh\" = 0 AND \"DontCountHits\" = 0 GROUP BY DATE_TRUNC('minute', to_timestamp_seconds(\"EventTime\")) ORDER BY DATE_TRUNC('minute', M) LIMIT 10 OFFSET 1000;\n"
+  }
+]

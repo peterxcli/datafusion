@@ -1335,6 +1335,13 @@ config_namespace! {
         /// reduce the number of rows decoded. This optimization is sometimes called "late materialization".
         pub pushdown_filters: bool, default = false
 
+        /// (reading) Fetch columns progressively as row filtering and decoding need
+        /// them. If false, fetch output and predicate pages together before evaluating
+        /// row filters, preserving page-index pruning performed at file open. This
+        /// can reduce dependent I/O rounds but may fetch pages that row filtering
+        /// would otherwise avoid. Does not enable filter pushdown or prefetch.
+        pub progressive_io: bool, default = true
+
         /// (reading) If true, filter expressions evaluated during the parquet decoding operation
         /// will be reordered heuristically to minimize the cost of evaluation. If false,
         /// the filters are applied in the same order as written in the query

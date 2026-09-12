@@ -18,16 +18,21 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::util::{BenchmarkRun, CommonOpt, QueryResult, print_memory_stats};
 use clap::Args;
+use datafusion::datasource::physical_plan::{FileScanConfigBuilder, ParquetSource};
+use datafusion::datasource::source::DataSourceExec;
 use datafusion::logical_expr::{ExplainFormat, ExplainOption};
+use datafusion::physical_plan::collect;
 use datafusion::{
     error::{DataFusionError, Result},
     prelude::SessionContext,
 };
 use datafusion_common::exec_datafusion_err;
 use datafusion_common::instant::Instant;
+use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRecursion};
 
 /// SQL to create the hits view with proper EventDate casting.
 ///
@@ -61,6 +66,11 @@ pub struct RunOpt {
     /// * `reorder_filters = true`
     #[arg(long = "pushdown")]
     pushdown: bool,
+
+    /// Maximum compressed bytes to prefetch for the next Parquet row group.
+    /// Zero disables prefetch. Uses the query's memory pool.
+    #[arg(long, default_value_t = 0)]
+    prefetch_bytes: usize,
 
     /// Common options
     #[command(flatten)]
@@ -254,8 +264,46 @@ impl RunOpt {
         let mut query_results = vec![];
         for i in 0..self.iterations() {
             let start = Instant::now();
-            let results = ctx.sql(sql).await?.collect().await?;
+            let dataframe = ctx.sql(sql).await?;
+            let task_ctx = Arc::new(dataframe.task_ctx());
+            let mut plan = dataframe.create_physical_plan().await?;
+            if self.prefetch_bytes > 0 {
+                plan = plan
+                    .transform_up(|plan| {
+                        if let Some(exec) = plan.downcast_ref::<DataSourceExec>()
+                            && let Some((config, source)) =
+                                exec.downcast_to_file_source::<ParquetSource>()
+                        {
+                            let source = source.clone().with_row_group_prefetch(
+                                self.prefetch_bytes,
+                                Arc::clone(&ctx.runtime_env().memory_pool),
+                            );
+                            let config = FileScanConfigBuilder::from(config.clone())
+                                .with_source(Arc::new(source))
+                                .build();
+                            return Ok(Transformed::yes(Arc::new(
+                                exec.clone().with_data_source(Arc::new(config)),
+                            )));
+                        }
+                        Ok(Transformed::no(plan))
+                    })?
+                    .data;
+            }
+            let results = collect(Arc::clone(&plan), task_ctx).await?;
             let elapsed = start.elapsed();
+            if self.prefetch_bytes > 0 {
+                let mut prefetched = 0;
+                plan.apply(|plan| {
+                    if let Some(value) = plan
+                        .metrics()
+                        .and_then(|metrics| metrics.sum_by_name("prefetch_row_groups"))
+                    {
+                        prefetched += value.as_usize();
+                    }
+                    Ok(TreeNodeRecursion::Continue)
+                })?;
+                println!("Prefetched row groups: {prefetched}");
+            }
             let ms = elapsed.as_secs_f64() * 1000.0;
             millis.push(ms);
             let row_count: usize = results.iter().map(|b| b.num_rows()).sum();

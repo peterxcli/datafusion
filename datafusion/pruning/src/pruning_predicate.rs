@@ -525,6 +525,13 @@ impl<'a> PruningPredicateBuilder<'a> {
             )
         })?;
 
+        // A changing filter can tighten after this snapshot. Its current inverse
+        // cannot prove that every row will still match when the data is read.
+        let stable_predicate = !matches!(
+            phys_expr::DynamicFilterTracking::classify(&predicate),
+            phys_expr::DynamicFilterTracking::Watching(_)
+        );
+
         // Get a (simpler) snapshot of the physical expr here to use with `PruningPredicate`.
         // In particular this unravels any `DynamicFilterPhysicalExpr`s by snapshotting them
         // so that PruningPredicate can work with a static expression.
@@ -567,7 +574,8 @@ impl<'a> PruningPredicateBuilder<'a> {
             orig_expr: predicate,
             literal_guarantees,
             max_in_list_size: self.max_in_list_size,
-            can_be_inverted_for_full_match: !properties.has_filter_semantics_only,
+            can_be_inverted_for_full_match: stable_predicate
+                && !properties.has_filter_semantics_only,
         })
     }
 }
@@ -746,7 +754,8 @@ impl PruningPredicate {
     }
 
     /// Returns whether pruning the logical inverse can safely prove that every
-    /// row in a container satisfies the original predicate.
+    /// row in a container satisfies the original predicate. Snapshots of dynamic
+    /// filters that can still change cannot provide this guarantee.
     pub fn can_be_inverted_for_full_match(&self) -> bool {
         self.can_be_inverted_for_full_match
     }
@@ -3396,6 +3405,29 @@ mod tests {
             &statistics,
             &[false],
         );
+    }
+
+    #[test]
+    fn full_match_requires_a_stable_dynamic_filter() -> Result<()> {
+        let schema =
+            Arc::new(Schema::new(vec![Field::new("c1", DataType::Int32, false)]));
+        let expression = logical2physical(&col("c1").gt(lit(5)), &schema);
+        let dynamic = Arc::new(DynamicFilterPhysicalExpr::new(
+            vec![Arc::new(phys_expr::Column::new("c1", 0))],
+            Arc::clone(&expression),
+        ));
+        let build = |expression| {
+            PruningPredicateBuilder::new()
+                .with_file_schema(Arc::clone(&schema))
+                .try_build(expression)
+        };
+        assert!(build(expression)?.can_be_inverted_for_full_match());
+        let snapshot = build(Arc::clone(&dynamic) as _)?;
+        assert!(!snapshot.can_be_inverted_for_full_match());
+        dynamic.mark_complete();
+        assert!(build(dynamic)?.can_be_inverted_for_full_match());
+        assert!(!snapshot.can_be_inverted_for_full_match());
+        Ok(())
     }
 
     /// Integration test demonstrating that a dynamic filter with replaced children as literals will be snapshotted, simplified and then pruned correctly.

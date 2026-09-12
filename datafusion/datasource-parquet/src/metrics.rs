@@ -445,3 +445,26 @@ impl RowFilterSkippedFullyMatchedMetric {
         count.add(1);
     }
 }
+
+/// Per-stream counters registered in the scan's existing metric set.
+#[derive(Clone)]
+pub(crate) struct PrefetchMetrics {
+    pub bytes: Count,
+    pub row_groups: Count,
+    pub budget_skips: Count,
+    pub wait_time: Time,
+}
+
+impl PrefetchMetrics {
+    pub fn new(metrics: &ExecutionPlanMetricsSet, partition: usize) -> Self {
+        Self {
+            bytes: MetricBuilder::new(metrics).counter("prefetch_bytes", partition),
+            row_groups: MetricBuilder::new(metrics)
+                .counter("prefetch_row_groups", partition),
+            budget_skips: MetricBuilder::new(metrics)
+                .counter("prefetch_budget_skips", partition),
+            wait_time: MetricBuilder::new(metrics)
+                .subset_time("prefetch_wait_time", partition),
+        }
+    }
+}

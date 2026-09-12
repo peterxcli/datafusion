@@ -809,3 +809,204 @@ async fn pushed_down_predicate_reports_the_original_error() {
         "expected the original cast error, got {root:?}"
     );
 }
+
+#[tokio::test]
+async fn upfront_io_preserves_page_pruning_from_session_configuration() {
+    use arrow::array::{Int64Array, StringArray, StructArray};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use datafusion_common::tree_node::{Transformed, TreeNode};
+    use datafusion_datasource::file_scan_config::FileScanConfigBuilder;
+    use datafusion_datasource::source::DataSourceExec;
+    use datafusion_datasource_parquet::source::ParquetSource;
+    use datafusion_execution::memory_pool::GreedyMemoryPool;
+    use parquet::arrow::ArrowWriter;
+    use parquet::file::properties::EnabledStatistics;
+    use std::sync::Arc;
+
+    let nested_fields = vec![Arc::new(Field::new("value", DataType::Int64, false))];
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("key", DataType::Int64, false),
+        Field::new("payload", DataType::Utf8, false),
+        Field::new(
+            "nested",
+            DataType::Struct(nested_fields.clone().into()),
+            false,
+        ),
+    ]));
+    let temp = TempDir::new().unwrap();
+    for clustered in [false, true] {
+        let expected: Vec<i64> = (0..3)
+            .flat_map(|group| {
+                (0..4096)
+                    .filter(move |row| {
+                        if clustered {
+                            *row < 100
+                        } else {
+                            row % 128 < 100
+                        }
+                    })
+                    .map(move |row| group * 4096 + row)
+            })
+            .collect();
+        for indexed in [false, true] {
+            let path = temp
+                .path()
+                .join(format!("pages-{indexed}-{clustered}.parquet"));
+            let props = WriterProperties::builder()
+                .set_max_row_group_row_count(Some(4096))
+                .set_data_page_row_count_limit(128)
+                .set_write_batch_size(128)
+                .set_dictionary_enabled(true)
+                .set_statistics_enabled(if indexed {
+                    EnabledStatistics::Page
+                } else {
+                    EnabledStatistics::Chunk
+                })
+                .set_offset_index_disabled(!indexed)
+                .build();
+            let mut writer = ArrowWriter::try_new(
+                File::create(&path).unwrap(),
+                Arc::clone(&schema),
+                Some(props),
+            )
+            .unwrap();
+            for group in 0..3i64 {
+                let nested = StructArray::new(
+                    nested_fields.clone().into(),
+                    vec![Arc::new(Int64Array::from_iter_values(
+                        (0..4096).map(|row| group * 4096 + row),
+                    ))],
+                    None,
+                );
+                let batch = RecordBatch::try_new(
+                    Arc::clone(&schema),
+                    vec![
+                        Arc::new(Int64Array::from_iter_values(
+                            (0..4096).map(|row| if clustered { row } else { row % 128 }),
+                        )),
+                        Arc::new(StringArray::from_iter_values(
+                            (0..4096).map(|row| format!("value-{}", row % 11)),
+                        )),
+                        Arc::new(nested),
+                    ],
+                )
+                .unwrap();
+                writer.write(&batch).unwrap();
+                writer.flush().unwrap();
+            }
+            let metadata = writer.close().unwrap();
+            assert_eq!(metadata.num_row_groups(), 3);
+            for group in metadata.row_groups() {
+                assert!(group.column(1).dictionary_page_offset().is_some());
+                assert_eq!(group.column(0).offset_index_offset().is_some(), indexed);
+            }
+            for predicate_in_output in [false, true] {
+                let mut expected_batch = None;
+                let mut baseline_bytes = None;
+                for (pushdown, progressive) in
+                    [(false, true), (true, true), (true, false)]
+                {
+                    for budget in [0, 1 << 20] {
+                        let config = SessionConfig::new()
+                            .with_target_partitions(1)
+                            .with_batch_size(127);
+                        let ctx = SessionContext::new_with_config(config);
+                        for (key, value) in [
+                            ("pushdown_filters", pushdown),
+                            ("progressive_io", progressive),
+                        ] {
+                            ctx.sql(&format!(
+                                "SET datafusion.execution.parquet.{key} = {value}"
+                            ))
+                            .await
+                            .unwrap()
+                            .collect()
+                            .await
+                            .unwrap();
+                        }
+                        ctx.register_parquet(
+                            "t",
+                            path.to_str().unwrap(),
+                            ParquetReadOptions::default(),
+                        )
+                        .await
+                        .unwrap();
+                        let key = if predicate_in_output { "key," } else { "" };
+                        let plan = ctx.sql(&format!("SELECT {key} payload, nested.value AS value FROM t WHERE key < 100 ORDER BY value"))
+                        .await.unwrap().create_physical_plan().await.unwrap();
+                        let mut scans = 0;
+                        let plan = plan
+                            .transform_up(|plan| {
+                                if let Some(exec) = plan.downcast_ref::<DataSourceExec>()
+                                    && let Some((config, source)) =
+                                        exec.downcast_to_file_source::<ParquetSource>()
+                                {
+                                    scans += 1;
+                                    assert_eq!(
+                                        source
+                                            .table_parquet_options()
+                                            .global
+                                            .progressive_io,
+                                        progressive
+                                    );
+                                    let source = source.clone().with_row_group_prefetch(
+                                        budget,
+                                        Arc::new(GreedyMemoryPool::new(1 << 20)),
+                                    );
+                                    let config =
+                                        FileScanConfigBuilder::from(config.clone())
+                                            .with_source(Arc::new(source))
+                                            .build();
+                                    return Ok(Transformed::yes(Arc::new(
+                                        exec.clone().with_data_source(Arc::new(config)),
+                                    )));
+                                }
+                                Ok(Transformed::no(plan))
+                            })
+                            .unwrap()
+                            .data;
+                        assert_eq!(scans, 1);
+                        let batches =
+                            collect(Arc::clone(&plan), ctx.task_ctx()).await.unwrap();
+                        let batch = concat_batches(&plan.schema(), &batches).unwrap();
+                        let values = batch
+                            .column(batch.num_columns() - 1)
+                            .as_any()
+                            .downcast_ref::<Int64Array>()
+                            .unwrap();
+                        assert_eq!(values.values().as_ref(), expected.as_slice());
+                        if let Some(expected) = &expected_batch {
+                            assert_eq!(&batch, expected);
+                        } else {
+                            expected_batch = Some(batch);
+                        }
+                        let metrics = TestParquetFile::parquet_metrics(&plan).unwrap();
+                        let bytes = get_value(&metrics, "bytes_scanned");
+                        if indexed && clustered {
+                            assert!(
+                                get_pruning_metrics(&metrics, "page_index_rows_pruned").0
+                                    > 0
+                            );
+                        }
+                        if !predicate_in_output {
+                            if let Some(expected) = baseline_bytes {
+                                assert_eq!(
+                                    bytes, expected,
+                                    "clustered={clustered}, indexed={indexed}, pushdown={pushdown}, progressive={progressive}, budget={budget}"
+                                );
+                            } else {
+                                baseline_bytes = Some(bytes);
+                            }
+                        }
+                        if budget > 0 {
+                            assert!(get_value(&metrics, "prefetch_bytes") > 0);
+                        }
+                        if pushdown {
+                            assert!(get_value(&metrics, "pushdown_rows_pruned") > 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

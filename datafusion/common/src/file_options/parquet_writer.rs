@@ -236,6 +236,7 @@ impl ParquetOptions {
             skip_metadata: _,
             metadata_size_hint: _,
             pushdown_filters: _,
+            progressive_io: _,
             reorder_filters: _,
             force_filter_selections: _, // not used for writer props
             allow_single_file_parallelism: _,
@@ -494,6 +495,7 @@ mod tests {
             skip_metadata: defaults.skip_metadata,
             metadata_size_hint: defaults.metadata_size_hint,
             pushdown_filters: defaults.pushdown_filters,
+            progressive_io: defaults.progressive_io,
             reorder_filters: defaults.reorder_filters,
             force_filter_selections: defaults.force_filter_selections,
             allow_single_file_parallelism: defaults.allow_single_file_parallelism,
@@ -580,6 +582,7 @@ mod tests {
 
         TableParquetOptions {
             global: ParquetOptions {
+                progressive_io: true,
                 // global options
                 data_pagesize_limit: props.data_page_size_limit(),
                 write_batch_size: props.write_batch_size(),

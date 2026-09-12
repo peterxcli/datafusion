@@ -730,6 +730,7 @@ impl From<&ParquetFormatFactory> for protobuf::TableParquetOptions {
                 parquet_options::MetadataSizeHintOpt::MetadataSizeHint(size as u64)
             }),
             pushdown_filters: global_options.global.pushdown_filters,
+            progressive_io: Some(global_options.global.progressive_io),
             reorder_filters: global_options.global.reorder_filters,
             force_filter_selections: global_options.global.force_filter_selections,
             data_pagesize_limit: global_options.global.data_pagesize_limit as u64,
