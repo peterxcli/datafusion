@@ -1,3 +1,7 @@
+[default.extend-identifiers]
+# Official ClickBench column name, preserved in query manifests and charts.
+TraficSourceID = "TraficSourceID"
+
 [default.extend-words]
 # random words from unit tests
 Pn = "Pn"

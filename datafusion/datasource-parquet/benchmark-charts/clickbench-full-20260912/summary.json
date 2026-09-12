@@ -1,0 +1,1120 @@
+[
+  {
+    "query_id": 0,
+    "sql": "SELECT COUNT(*) FROM hits;",
+    "passes": {
+      "0": {
+        "before": 3.041468,
+        "after": 3.557861
+      },
+      "1": {
+        "before": 3.023661,
+        "after": 3.419217
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 2.81417,
+        "blocked_ms": 19.69919,
+        "io_cpu_overlap_percent": 0
+      },
+      "after": {
+        "elapsed_ms": 3.030168,
+        "blocked_ms": 21.211176000000002,
+        "io_cpu_overlap_percent": 0
+      }
+    }
+  },
+  {
+    "query_id": 1,
+    "sql": "SELECT COUNT(*) FROM hits WHERE \"AdvEngineID\" <> 0;",
+    "passes": {
+      "0": {
+        "before": 42.394728,
+        "after": 46.797441
+      },
+      "1": {
+        "before": 42.093981,
+        "after": 43.008922999999996
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 42.514397,
+        "blocked_ms": 89.63561900000002,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 47.110024,
+        "blocked_ms": 114.57661700000001,
+        "io_cpu_overlap_percent": 99.34067011056693
+      }
+    }
+  },
+  {
+    "query_id": 2,
+    "sql": "SELECT SUM(\"AdvEngineID\"), COUNT(*), AVG(\"ResolutionWidth\") FROM hits;",
+    "passes": {
+      "0": {
+        "before": 182.11266600000002,
+        "after": 123.03739599999999
+      },
+      "1": {
+        "before": 126.03568500000002,
+        "after": 111.587802
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 143.72557799999998,
+        "blocked_ms": 206.27678600000007,
+        "io_cpu_overlap_percent": 99.91392324092315
+      },
+      "after": {
+        "elapsed_ms": 117.58356500000001,
+        "blocked_ms": 124.45776100000002,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 3,
+    "sql": "SELECT AVG(\"UserID\") FROM hits;",
+    "passes": {
+      "0": {
+        "before": 147.755623,
+        "after": 128.44499000000002
+      },
+      "1": {
+        "before": 127.53112,
+        "after": 129.83112899999998
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 151.14191699999998,
+        "blocked_ms": 301.30785599999996,
+        "io_cpu_overlap_percent": 99.86726401345902
+      },
+      "after": {
+        "elapsed_ms": 158.052132,
+        "blocked_ms": 266.1583860000001,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 4,
+    "sql": "SELECT COUNT(DISTINCT \"UserID\") FROM hits;",
+    "passes": {
+      "0": {
+        "before": 1389.911604,
+        "after": 1295.941005
+      },
+      "1": {
+        "before": 1195.952581,
+        "after": 1203.3208300000001
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1303.963414,
+        "blocked_ms": 619.3650119999998,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1184.099491,
+        "blocked_ms": 381.80846499999996,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 5,
+    "sql": "SELECT COUNT(DISTINCT \"SearchPhrase\") FROM hits;",
+    "passes": {
+      "0": {
+        "before": 1172.966511,
+        "after": 1040.696169
+      },
+      "1": {
+        "before": 1012.716046,
+        "after": 1079.326185
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1042.3478049999999,
+        "blocked_ms": 455.0049959999998,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1004.480075,
+        "blocked_ms": 257.416224,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 6,
+    "sql": "SELECT MIN(\"EventDate\"), MAX(\"EventDate\") FROM hits;",
+    "passes": {
+      "0": {
+        "before": 4.407002,
+        "after": 3.087288
+      },
+      "1": {
+        "before": 3.17373,
+        "after": 2.939363
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 3.367627,
+        "blocked_ms": 23.573389,
+        "io_cpu_overlap_percent": 0
+      },
+      "after": {
+        "elapsed_ms": 3.496957,
+        "blocked_ms": 24.478699000000006,
+        "io_cpu_overlap_percent": 0
+      }
+    }
+  },
+  {
+    "query_id": 7,
+    "sql": "SELECT \"AdvEngineID\", COUNT(*) FROM hits WHERE \"AdvEngineID\" <> 0 GROUP BY \"AdvEngineID\" ORDER BY COUNT(*) DESC;",
+    "passes": {
+      "0": {
+        "before": 52.876557999999996,
+        "after": 56.801987
+      },
+      "1": {
+        "before": 53.269754000000006,
+        "after": 53.389184
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 54.930465999999996,
+        "blocked_ms": 97.86054200000002,
+        "io_cpu_overlap_percent": 99.69782713564561
+      },
+      "after": {
+        "elapsed_ms": 73.741092,
+        "blocked_ms": 203.41898600000007,
+        "io_cpu_overlap_percent": 99.73581380403964
+      }
+    }
+  },
+  {
+    "query_id": 8,
+    "sql": "SELECT \"RegionID\", COUNT(DISTINCT \"UserID\") AS u FROM hits GROUP BY \"RegionID\" ORDER BY u DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 1471.840761,
+        "after": 1575.229937
+      },
+      "1": {
+        "before": 1537.2826979999998,
+        "after": 1450.338972
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1483.994236,
+        "blocked_ms": 570.5820149999996,
+        "io_cpu_overlap_percent": 99.97336948470932
+      },
+      "after": {
+        "elapsed_ms": 1427.494529,
+        "blocked_ms": 386.59714300000013,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 9,
+    "sql": "SELECT \"RegionID\", SUM(\"AdvEngineID\"), COUNT(*) AS c, AVG(\"ResolutionWidth\"), COUNT(DISTINCT \"UserID\") FROM hits GROUP BY \"RegionID\" ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 1727.869163,
+        "after": 1729.7875139999999
+      },
+      "1": {
+        "before": 1694.630793,
+        "after": 1556.497261
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1701.514049,
+        "blocked_ms": 2386.7332969999993,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1662.9329189999999,
+        "blocked_ms": 2293.8785039999984,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 10,
+    "sql": "SELECT \"MobilePhoneModel\", COUNT(DISTINCT \"UserID\") AS u FROM hits WHERE \"MobilePhoneModel\" <> '' GROUP BY \"MobilePhoneModel\" ORDER BY u DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 389.08601500000003,
+        "after": 384.781761
+      },
+      "1": {
+        "before": 426.277474,
+        "after": 373.84024300000004
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 378.699937,
+        "blocked_ms": 289.9122669999999,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 390.769492,
+        "blocked_ms": 253.92590200000006,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 11,
+    "sql": "SELECT \"MobilePhone\", \"MobilePhoneModel\", COUNT(DISTINCT \"UserID\") AS u FROM hits WHERE \"MobilePhoneModel\" <> '' GROUP BY \"MobilePhone\", \"MobilePhoneModel\" ORDER BY u DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 445.821509,
+        "after": 432.273824
+      },
+      "1": {
+        "before": 435.77185499999996,
+        "after": 401.368841
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 461.943451,
+        "blocked_ms": 345.8567620000003,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 405.923451,
+        "blocked_ms": 247.31754100000012,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 12,
+    "sql": "SELECT \"SearchPhrase\", COUNT(*) AS c FROM hits WHERE \"SearchPhrase\" <> '' GROUP BY \"SearchPhrase\" ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 1208.872116,
+        "after": 1188.4120899999998
+      },
+      "1": {
+        "before": 1145.581266,
+        "after": 1157.316474
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1197.282446,
+        "blocked_ms": 505.7668380000006,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1199.331035,
+        "blocked_ms": 438.7031490000006,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 13,
+    "sql": "SELECT \"SearchPhrase\", COUNT(DISTINCT \"UserID\") AS u FROM hits WHERE \"SearchPhrase\" <> '' GROUP BY \"SearchPhrase\" ORDER BY u DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 1659.157034,
+        "after": 1729.718077
+      },
+      "1": {
+        "before": 1667.796448,
+        "after": 1643.954242
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1657.202081,
+        "blocked_ms": 1054.6867519999998,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1629.611932,
+        "blocked_ms": 752.9417809999997,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 14,
+    "sql": "SELECT \"SearchEngineID\", \"SearchPhrase\", COUNT(*) AS c FROM hits WHERE \"SearchPhrase\" <> '' GROUP BY \"SearchEngineID\", \"SearchPhrase\" ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 1166.882781,
+        "after": 1191.479061
+      },
+      "1": {
+        "before": 1400.4893809999999,
+        "after": 1199.6718779999999
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1198.620028,
+        "blocked_ms": 529.5610930000005,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1218.59804,
+        "blocked_ms": 403.5176150000002,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 15,
+    "sql": "SELECT \"UserID\", COUNT(*) FROM hits GROUP BY \"UserID\" ORDER BY COUNT(*) DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 1385.997828,
+        "after": 1343.903728
+      },
+      "1": {
+        "before": 1354.626855,
+        "after": 1387.313591
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1429.808581,
+        "blocked_ms": 391.9647959999999,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1344.821174,
+        "blocked_ms": 423.8005220000001,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 16,
+    "sql": "SELECT \"UserID\", \"SearchPhrase\", COUNT(*) FROM hits GROUP BY \"UserID\", \"SearchPhrase\" ORDER BY COUNT(*) DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 2515.7008530000003,
+        "after": 2404.6582280000002
+      },
+      "1": {
+        "before": 2659.074513,
+        "after": 2660.289449
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 2535.637209,
+        "blocked_ms": 1087.469038999999,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 2525.015003,
+        "blocked_ms": 803.4195690000003,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 17,
+    "sql": "SELECT \"UserID\", \"SearchPhrase\", COUNT(*) FROM hits GROUP BY \"UserID\", \"SearchPhrase\" LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 2532.3422029999997,
+        "after": 2537.731768
+      },
+      "1": {
+        "before": 2581.937573,
+        "after": 2512.759857
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 2560.352989,
+        "blocked_ms": 1093.4144489999999,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 2454.4561599999997,
+        "blocked_ms": 678.0085530000001,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 18,
+    "sql": "SELECT \"UserID\", extract(minute FROM to_timestamp_seconds(\"EventTime\")) AS m, \"SearchPhrase\", COUNT(*) FROM hits GROUP BY \"UserID\", m, \"SearchPhrase\" ORDER BY COUNT(*) DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 5310.451571,
+        "after": 4960.396805
+      },
+      "1": {
+        "before": 5457.761081000001,
+        "after": 5173.368376
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 5218.955884999999,
+        "blocked_ms": 2028.320758000001,
+        "io_cpu_overlap_percent": 99.99104285846938
+      },
+      "after": {
+        "elapsed_ms": 5393.494288,
+        "blocked_ms": 1539.710832,
+        "io_cpu_overlap_percent": 99.92229344783094
+      }
+    }
+  },
+  {
+    "query_id": 19,
+    "sql": "SELECT \"UserID\" FROM hits WHERE \"UserID\" = 435090932899640449;",
+    "passes": {
+      "0": {
+        "before": 134.553536,
+        "after": 136.175951
+      },
+      "1": {
+        "before": 135.42983,
+        "after": 123.28692600000001
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 147.971958,
+        "blocked_ms": 313.2423939999999,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 135.396177,
+        "blocked_ms": 246.32079599999997,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 20,
+    "sql": "SELECT COUNT(*) FROM hits WHERE \"URL\" LIKE '%google%';",
+    "passes": {
+      "0": {
+        "before": 1470.939246,
+        "after": 1535.670542
+      },
+      "1": {
+        "before": 1505.510365,
+        "after": 1461.885565
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1538.865532,
+        "blocked_ms": 1676.4430399999974,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1618.851134,
+        "blocked_ms": 2205.125250000001,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 21,
+    "sql": "SELECT \"SearchPhrase\", MIN(\"URL\"), COUNT(*) AS c FROM hits WHERE \"URL\" LIKE '%google%' AND \"SearchPhrase\" <> '' GROUP BY \"SearchPhrase\" ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 1692.3226570000002,
+        "after": 1697.081116
+      },
+      "1": {
+        "before": 1813.825482,
+        "after": 1813.404112
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1753.1670020000001,
+        "blocked_ms": 1845.8455549999999,
+        "io_cpu_overlap_percent": 99.97686834168525
+      },
+      "after": {
+        "elapsed_ms": 1790.651609,
+        "blocked_ms": 1850.4323440000014,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 22,
+    "sql": "SELECT \"SearchPhrase\", MIN(\"URL\"), MIN(\"Title\"), COUNT(*) AS c, COUNT(DISTINCT \"UserID\") FROM hits WHERE \"Title\" LIKE '%Google%' AND \"URL\" NOT LIKE '%.google.%' AND \"SearchPhrase\" <> '' GROUP BY \"SearchPhrase\" ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 2900.472153,
+        "after": 2918.1576529999998
+      },
+      "1": {
+        "before": 2788.597206,
+        "after": 2721.571103
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 2877.112526,
+        "blocked_ms": 3437.562060000001,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 2792.911183,
+        "blocked_ms": 3015.3645019999985,
+        "io_cpu_overlap_percent": 99.93053591138042
+      }
+    }
+  },
+  {
+    "query_id": 23,
+    "sql": "SELECT * FROM hits WHERE \"URL\" LIKE '%google%' ORDER BY \"EventTime\" LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 363.22082,
+        "after": 340.589762
+      },
+      "1": {
+        "before": 325.943262,
+        "after": 386.39520500000003
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 358.482611,
+        "blocked_ms": 1451.9659789999998,
+        "io_cpu_overlap_percent": 97.19518569451422
+      },
+      "after": {
+        "elapsed_ms": 418.61368,
+        "blocked_ms": 1565.086718,
+        "io_cpu_overlap_percent": 95.94082105027327
+      }
+    }
+  },
+  {
+    "query_id": 24,
+    "sql": "SELECT \"SearchPhrase\" FROM hits WHERE \"SearchPhrase\" <> '' ORDER BY \"EventTime\" LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 95.907624,
+        "after": 95.29302000000001
+      },
+      "1": {
+        "before": 90.490666,
+        "after": 93.241911
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 97.879813,
+        "blocked_ms": 177.614905,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 95.858215,
+        "blocked_ms": 145.42009899999996,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 25,
+    "sql": "SELECT \"SearchPhrase\" FROM hits WHERE \"SearchPhrase\" <> '' ORDER BY \"SearchPhrase\" LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 497.05555899999996,
+        "after": 479.656078
+      },
+      "1": {
+        "before": 457.08663,
+        "after": 489.356232
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 492.67748500000005,
+        "blocked_ms": 441.0005839999994,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 492.379162,
+        "blocked_ms": 415.5171490000001,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 26,
+    "sql": "SELECT \"SearchPhrase\" FROM hits WHERE \"SearchPhrase\" <> '' ORDER BY \"EventTime\", \"SearchPhrase\" LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 132.406623,
+        "after": 141.999944
+      },
+      "1": {
+        "before": 137.37790999999999,
+        "after": 136.256121
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 148.814384,
+        "blocked_ms": 250.71437400000002,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 142.192527,
+        "blocked_ms": 202.96831200000003,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 27,
+    "sql": "SELECT \"CounterID\", AVG(octet_length(\"URL\")) AS l, COUNT(*) AS c FROM hits WHERE \"URL\" <> '' GROUP BY \"CounterID\" HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25;",
+    "passes": {
+      "0": {
+        "before": 1604.4605569999999,
+        "after": 1561.5904309999999
+      },
+      "1": {
+        "before": 1580.224796,
+        "after": 1442.6209370000001
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1631.20867,
+        "blocked_ms": 1819.9371870000016,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1525.949864,
+        "blocked_ms": 1258.1553320000007,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 28,
+    "sql": "SELECT REGEXP_REPLACE(\"Referer\", '^https?://(?:www\\.)?([^/]+)/.*$', '\\1') AS k, AVG(octet_length(\"Referer\")) AS l, COUNT(*) AS c, MIN(\"Referer\") FROM hits WHERE \"Referer\" <> '' GROUP BY k HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25;",
+    "passes": {
+      "0": {
+        "before": 7950.4791780000005,
+        "after": 7757.435015
+      },
+      "1": {
+        "before": 7655.066725000001,
+        "after": 7630.489004
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 8289.193629,
+        "blocked_ms": 1614.2558929999993,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 8234.844605999999,
+        "blocked_ms": 1029.6109629999996,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 29,
+    "sql": "SELECT SUM(\"ResolutionWidth\"), SUM(\"ResolutionWidth\" + 1), SUM(\"ResolutionWidth\" + 2), SUM(\"ResolutionWidth\" + 3), SUM(\"ResolutionWidth\" + 4), SUM(\"ResolutionWidth\" + 5), SUM(\"ResolutionWidth\" + 6), SUM(\"ResolutionWidth\" + 7), SUM(\"ResolutionWidth\" + 8), SUM(\"ResolutionWidth\" + 9), SUM(\"ResolutionWidth\" + 10), SUM(\"ResolutionWidth\" + 11), SUM(\"ResolutionWidth\" + 12), SUM(\"ResolutionWidth\" + 13), SUM(\"ResolutionWidth\" + 14), SUM(\"ResolutionWidth\" + 15), SUM(\"ResolutionWidth\" + 16), SUM(\"ResolutionWidth\" + 17), SUM(\"ResolutionWidth\" + 18), SUM(\"ResolutionWidth\" + 19), SUM(\"ResolutionWidth\" + 20), SUM(\"ResolutionWidth\" + 21), SUM(\"ResolutionWidth\" + 22), SUM(\"ResolutionWidth\" + 23), SUM(\"ResolutionWidth\" + 24), SUM(\"ResolutionWidth\" + 25), SUM(\"ResolutionWidth\" + 26), SUM(\"ResolutionWidth\" + 27), SUM(\"ResolutionWidth\" + 28), SUM(\"ResolutionWidth\" + 29), SUM(\"ResolutionWidth\" + 30), SUM(\"ResolutionWidth\" + 31), SUM(\"ResolutionWidth\" + 32), SUM(\"ResolutionWidth\" + 33), SUM(\"ResolutionWidth\" + 34), SUM(\"ResolutionWidth\" + 35), SUM(\"ResolutionWidth\" + 36), SUM(\"ResolutionWidth\" + 37), SUM(\"ResolutionWidth\" + 38), SUM(\"ResolutionWidth\" + 39), SUM(\"ResolutionWidth\" + 40), SUM(\"ResolutionWidth\" + 41), SUM(\"ResolutionWidth\" + 42), SUM(\"ResolutionWidth\" + 43), SUM(\"ResolutionWidth\" + 44), SUM(\"ResolutionWidth\" + 45), SUM(\"ResolutionWidth\" + 46), SUM(\"ResolutionWidth\" + 47), SUM(\"ResolutionWidth\" + 48), SUM(\"ResolutionWidth\" + 49), SUM(\"ResolutionWidth\" + 50), SUM(\"ResolutionWidth\" + 51), SUM(\"ResolutionWidth\" + 52), SUM(\"ResolutionWidth\" + 53), SUM(\"ResolutionWidth\" + 54), SUM(\"ResolutionWidth\" + 55), SUM(\"ResolutionWidth\" + 56), SUM(\"ResolutionWidth\" + 57), SUM(\"ResolutionWidth\" + 58), SUM(\"ResolutionWidth\" + 59), SUM(\"ResolutionWidth\" + 60), SUM(\"ResolutionWidth\" + 61), SUM(\"ResolutionWidth\" + 62), SUM(\"ResolutionWidth\" + 63), SUM(\"ResolutionWidth\" + 64), SUM(\"ResolutionWidth\" + 65), SUM(\"ResolutionWidth\" + 66), SUM(\"ResolutionWidth\" + 67), SUM(\"ResolutionWidth\" + 68), SUM(\"ResolutionWidth\" + 69), SUM(\"ResolutionWidth\" + 70), SUM(\"ResolutionWidth\" + 71), SUM(\"ResolutionWidth\" + 72), SUM(\"ResolutionWidth\" + 73), SUM(\"ResolutionWidth\" + 74), SUM(\"ResolutionWidth\" + 75), SUM(\"ResolutionWidth\" + 76), SUM(\"ResolutionWidth\" + 77), SUM(\"ResolutionWidth\" + 78), SUM(\"ResolutionWidth\" + 79), SUM(\"ResolutionWidth\" + 80), SUM(\"ResolutionWidth\" + 81), SUM(\"ResolutionWidth\" + 82), SUM(\"ResolutionWidth\" + 83), SUM(\"ResolutionWidth\" + 84), SUM(\"ResolutionWidth\" + 85), SUM(\"ResolutionWidth\" + 86), SUM(\"ResolutionWidth\" + 87), SUM(\"ResolutionWidth\" + 88), SUM(\"ResolutionWidth\" + 89) FROM hits;",
+    "passes": {
+      "0": {
+        "before": 120.039952,
+        "after": 119.05178099999999
+      },
+      "1": {
+        "before": 214.126372,
+        "after": 199.92249900000002
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 148.671967,
+        "blocked_ms": 372.97787100000033,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 119.84756300000001,
+        "blocked_ms": 277.7899469999999,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 30,
+    "sql": "SELECT \"SearchEngineID\", \"ClientIP\", COUNT(*) AS c, SUM(\"IsRefresh\"), AVG(\"ResolutionWidth\") FROM hits WHERE \"SearchPhrase\" <> '' GROUP BY \"SearchEngineID\", \"ClientIP\" ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 1050.9699320000002,
+        "after": 1014.891389
+      },
+      "1": {
+        "before": 1184.277215,
+        "after": 1180.4082
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1226.044166,
+        "blocked_ms": 601.8943800000005,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1200.3483230000002,
+        "blocked_ms": 480.4919460000001,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 31,
+    "sql": "SELECT \"WatchID\", \"ClientIP\", COUNT(*) AS c, SUM(\"IsRefresh\"), AVG(\"ResolutionWidth\") FROM hits WHERE \"SearchPhrase\" <> '' GROUP BY \"WatchID\", \"ClientIP\" ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 1043.925183,
+        "after": 1027.220896
+      },
+      "1": {
+        "before": 1026.010565,
+        "after": 1065.9889389999998
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1150.885232,
+        "blocked_ms": 697.9169930000005,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1166.995858,
+        "blocked_ms": 516.4866930000002,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 32,
+    "sql": "SELECT \"WatchID\", \"ClientIP\", COUNT(*) AS c, SUM(\"IsRefresh\"), AVG(\"ResolutionWidth\") FROM hits GROUP BY \"WatchID\", \"ClientIP\" ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 15698.656572000002,
+        "after": 15983.750941
+      },
+      "1": {
+        "before": 17130.181955,
+        "after": 15586.504405
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 17946.053995,
+        "blocked_ms": 5009.447160999976,
+        "io_cpu_overlap_percent": 99.926318762849
+      },
+      "after": {
+        "elapsed_ms": 17889.524954999997,
+        "blocked_ms": 6420.2919299999985,
+        "io_cpu_overlap_percent": 99.9217893937605
+      }
+    }
+  },
+  {
+    "query_id": 33,
+    "sql": "SELECT \"URL\", COUNT(*) AS c FROM hits GROUP BY \"URL\" ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 11392.31359,
+        "after": 11734.832094
+      },
+      "1": {
+        "before": 11752.927632,
+        "after": 11349.409782
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 12850.011741,
+        "blocked_ms": 8136.100306000041,
+        "io_cpu_overlap_percent": 99.97656134966498
+      },
+      "after": {
+        "elapsed_ms": 12520.483792,
+        "blocked_ms": 8269.252171999982,
+        "io_cpu_overlap_percent": 99.94387072718986
+      }
+    }
+  },
+  {
+    "query_id": 34,
+    "sql": "SELECT 1, \"URL\", COUNT(*) AS c FROM hits GROUP BY 1, \"URL\" ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 11264.819034,
+        "after": 11469.087650000001
+      },
+      "1": {
+        "before": 11136.946085,
+        "after": 12349.382323
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 11766.477142,
+        "blocked_ms": 6473.237013999994,
+        "io_cpu_overlap_percent": 99.95518970639141
+      },
+      "after": {
+        "elapsed_ms": 12255.01893,
+        "blocked_ms": 6092.706193999989,
+        "io_cpu_overlap_percent": 99.9394093405908
+      }
+    }
+  },
+  {
+    "query_id": 35,
+    "sql": "SELECT \"ClientIP\", \"ClientIP\" - 1, \"ClientIP\" - 2, \"ClientIP\" - 3, COUNT(*) AS c FROM hits GROUP BY \"ClientIP\", \"ClientIP\" - 1, \"ClientIP\" - 2, \"ClientIP\" - 3 ORDER BY c DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 1166.780127,
+        "after": 1137.9453589999998
+      },
+      "1": {
+        "before": 1282.72593,
+        "after": 1230.3753829999998
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 1180.544256,
+        "blocked_ms": 374.3873080000001,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 1126.347674,
+        "blocked_ms": 322.60067300000003,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 36,
+    "sql": "SELECT \"URL\", COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"DontCountHits\" = 0 AND \"IsRefresh\" = 0 AND \"URL\" <> '' GROUP BY \"URL\" ORDER BY PageViews DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 117.982431,
+        "after": 118.647275
+      },
+      "1": {
+        "before": 116.494017,
+        "after": 131.444851
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 115.487588,
+        "blocked_ms": 647.5109600000001,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 115.10678200000001,
+        "blocked_ms": 641.6132329999999,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 37,
+    "sql": "SELECT \"Title\", COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"DontCountHits\" = 0 AND \"IsRefresh\" = 0 AND \"Title\" <> '' GROUP BY \"Title\" ORDER BY PageViews DESC LIMIT 10;",
+    "passes": {
+      "0": {
+        "before": 62.153786000000004,
+        "after": 64.276955
+      },
+      "1": {
+        "before": 60.698710000000005,
+        "after": 64.86511
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 86.318382,
+        "blocked_ms": 537.9452670000001,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 92.878137,
+        "blocked_ms": 562.5238310000001,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 38,
+    "sql": "SELECT \"URL\", COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"IsRefresh\" = 0 AND \"IsLink\" <> 0 AND \"IsDownload\" = 0 GROUP BY \"URL\" ORDER BY PageViews DESC LIMIT 10 OFFSET 1000;",
+    "passes": {
+      "0": {
+        "before": 60.555071000000005,
+        "after": 61.010197000000005
+      },
+      "1": {
+        "before": 60.778309,
+        "after": 59.559270999999995
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 81.396632,
+        "blocked_ms": 522.559728,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 80.148965,
+        "blocked_ms": 493.9685289999999,
+        "io_cpu_overlap_percent": 99.9733151844078
+      }
+    }
+  },
+  {
+    "query_id": 39,
+    "sql": "SELECT \"TraficSourceID\", \"SearchEngineID\", \"AdvEngineID\", CASE WHEN (\"SearchEngineID\" = 0 AND \"AdvEngineID\" = 0) THEN \"Referer\" ELSE '' END AS Src, \"URL\" AS Dst, COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"IsRefresh\" = 0 GROUP BY \"TraficSourceID\", \"SearchEngineID\", \"AdvEngineID\", Src, Dst ORDER BY PageViews DESC LIMIT 10 OFFSET 1000;",
+    "passes": {
+      "0": {
+        "before": 217.11967700000002,
+        "after": 231.55102599999998
+      },
+      "1": {
+        "before": 216.75558,
+        "after": 232.89368399999998
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 248.568393,
+        "blocked_ms": 1449.8294429999996,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 235.04987799999998,
+        "blocked_ms": 1335.4258430000002,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 40,
+    "sql": "SELECT \"URLHash\", \"EventDate\", COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"IsRefresh\" = 0 AND \"TraficSourceID\" IN (-1, 6) AND \"RefererHash\" = 3594120000172545465 GROUP BY \"URLHash\", \"EventDate\" ORDER BY PageViews DESC LIMIT 10 OFFSET 100;",
+    "passes": {
+      "0": {
+        "before": 38.085048,
+        "after": 34.338656
+      },
+      "1": {
+        "before": 33.714962,
+        "after": 35.00086
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 36.718431,
+        "blocked_ms": 206.79211299999997,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 33.834992,
+        "blocked_ms": 186.07010100000002,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 41,
+    "sql": "SELECT \"WindowClientWidth\", \"WindowClientHeight\", COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-01' AND \"EventDate\" <= '2013-07-31' AND \"IsRefresh\" = 0 AND \"DontCountHits\" = 0 AND \"URLHash\" = 2868770270353813622 GROUP BY \"WindowClientWidth\", \"WindowClientHeight\" ORDER BY PageViews DESC LIMIT 10 OFFSET 10000;",
+    "passes": {
+      "0": {
+        "before": 33.645233,
+        "after": 31.478623999999996
+      },
+      "1": {
+        "before": 32.645392,
+        "after": 32.119006999999996
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 36.82569,
+        "blocked_ms": 197.22357000000005,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 33.394905,
+        "blocked_ms": 187.004987,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  },
+  {
+    "query_id": 42,
+    "sql": "SELECT DATE_TRUNC('minute', to_timestamp_seconds(\"EventTime\")) AS M, COUNT(*) AS PageViews FROM hits WHERE \"CounterID\" = 62 AND \"EventDate\" >= '2013-07-14' AND \"EventDate\" <= '2013-07-15' AND \"IsRefresh\" = 0 AND \"DontCountHits\" = 0 GROUP BY DATE_TRUNC('minute', to_timestamp_seconds(\"EventTime\")) ORDER BY DATE_TRUNC('minute', M) LIMIT 10 OFFSET 1000;",
+    "passes": {
+      "0": {
+        "before": 28.534792,
+        "after": 31.070536999999998
+      },
+      "1": {
+        "before": 31.329575,
+        "after": 30.283965
+      }
+    },
+    "native": {
+      "before": {
+        "elapsed_ms": 28.800282,
+        "blocked_ms": 159.37233700000002,
+        "io_cpu_overlap_percent": 100.0
+      },
+      "after": {
+        "elapsed_ms": 32.678283,
+        "blocked_ms": 178.89500400000003,
+        "io_cpu_overlap_percent": 100.0
+      }
+    }
+  }
+]

@@ -26,6 +26,9 @@ show local-file I/O CPU work moving from almost no overlap with query workers
 to 99.6% overlap. Query-worker CPU time is essentially unchanged. The work is
 happening concurrently, and the query finishes earlier.
 
+The subsequent [full partitioned ClickBench run](CLICKBENCH_FULL_PROFILING.md)
+contains 43 before/after query charts and shows a smaller, mixed timing benefit.
+
 ## Comparison and controls
 
 Both binaries ran on `chia-ping-aws1` (`peterxcli-ubuntu`): an x86_64 KVM guest
