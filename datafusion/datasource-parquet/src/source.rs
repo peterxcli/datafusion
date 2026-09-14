@@ -25,6 +25,7 @@ use crate::ParquetFileReaderFactory;
 use crate::opener::ParquetMorselizer;
 use crate::opener::build_pruning_predicates;
 use crate::opener::build_virtual_columns_state;
+use crate::push_decoder::RowGroupPrefetchOptions;
 use crate::row_filter::can_expr_be_pushed_down_with_schemas;
 use arrow_schema::Fields;
 use arrow_schema::extension::ExtensionType;
@@ -35,6 +36,7 @@ use datafusion_common::config::EncryptionFactoryOptions;
 use datafusion_datasource::as_file_source;
 use datafusion_datasource::file_stream::FileOpener;
 use datafusion_datasource::morsel::Morselizer;
+use datafusion_execution::memory_pool::MemoryPool;
 
 use arrow::array::timezone::Tz;
 use arrow::datatypes::TimeUnit;
@@ -318,6 +320,7 @@ pub struct ParquetSource {
     /// Sort order driving `PreparedAccessPlan::reorder_by_statistics`
     /// in the opener.
     sort_order_for_reorder: Option<LexOrdering>,
+    row_group_prefetch: Option<RowGroupPrefetchOptions>,
 }
 
 impl ParquetSource {
@@ -344,7 +347,44 @@ impl ParquetSource {
             encryption_factory: None,
             reverse_row_groups: false,
             sort_order_for_reorder: None,
+            row_group_prefetch: None,
         }
+    }
+
+    /// Prefetch one upcoming row group's output and predicate pages selected at file
+    /// open while decoding the current group. Disabled by default; a zero budget disables it.
+    ///
+    /// `max_bytes` bounds additional compressed bytes per file stream, not the
+    /// current reader's memory. Prefetch is skipped if a complete fetched row
+    /// group does not fit or `memory_pool` cannot reserve its bytes. Required
+    /// reads continue normally. Use the execution's memory pool to account for
+    /// concurrent scans together.
+    ///
+    /// This can read extra bytes when row filtering or a later dynamic
+    /// predicate eliminates prefetched data. Output order is unchanged. Dropping
+    /// the stream cancels its background I/O. This execution-local option is not
+    /// serialized in physical plans; set it on the executing ParquetSource.
+    pub fn with_row_group_prefetch(
+        mut self,
+        max_bytes: usize,
+        memory_pool: Arc<dyn MemoryPool>,
+    ) -> Self {
+        self.row_group_prefetch = (max_bytes > 0).then_some(RowGroupPrefetchOptions {
+            max_bytes,
+            memory_pool,
+        });
+        self
+    }
+
+    /// Fetch pages progressively as decoding and row filtering require
+    /// them (the default). When false, the first demand read for each row group
+    /// fetches the output and predicate pages selected at file open together. This reduces
+    /// dependent I/O rounds but can read pages that filtering would skip.
+    /// Controls demand reads independently of next-row-group prefetch.
+    /// Also configurable as `datafusion.execution.parquet.progressive_io`.
+    pub fn with_progressive_io(mut self, progressive_io: bool) -> Self {
+        self.table_parquet_options.global.progressive_io = progressive_io;
+        self
     }
 
     /// Set the `TableParquetOptions` for this ParquetSource.
@@ -634,6 +674,8 @@ impl FileSource for ParquetSource {
 
         Ok(Box::new(ParquetMorselizer {
             partition_index: partition,
+            row_group_prefetch: self.row_group_prefetch.clone(),
+            progressive_io: self.table_parquet_options.global.progressive_io,
             projection: self.projection.clone(),
             batch_size: self
                 .batch_size

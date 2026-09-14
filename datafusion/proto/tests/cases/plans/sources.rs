@@ -87,6 +87,7 @@ fn roundtrip_parquet_exec_with_pruning_predicate() -> Result<()> {
 
     let mut options = TableParquetOptions::new();
     options.global.pushdown_filters = true;
+    options.global.progressive_io = false;
 
     let file_source = Arc::new(
         ParquetSource::new(Arc::clone(&file_schema))
