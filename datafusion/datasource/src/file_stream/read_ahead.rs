@@ -25,7 +25,9 @@ use std::task::{Context, Poll, Waker};
 use arrow::record_batch::RecordBatch;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_common_runtime::JoinSet;
-use datafusion_execution::memory_pool::{MemoryConsumer, MemoryPool, MemoryReservation};
+use datafusion_execution::memory_pool::{
+    MemoryConsumer, MemoryLimit, MemoryPool, MemoryReservation,
+};
 use datafusion_physical_plan::metrics::{
     Count, ExecutionPlanMetricsSet, Gauge, MetricBuilder,
 };
@@ -44,6 +46,7 @@ const MIN_JOB_BYTES: usize = 16 * 1024 * 1024;
 pub struct ReadAheadBudget {
     max_jobs: usize,
     max_bytes: usize,
+    governed: bool,
     pool: Arc<dyn MemoryPool>,
     used: Mutex<usize>,
     peak_bytes: Gauge,
@@ -55,16 +58,19 @@ pub struct ReadAheadBudget {
 }
 
 impl ReadAheadBudget {
-    /// Construct a backlog bounded by job count and compressed bytes.
+    /// Construct a byte-bounded backlog. Governed mode additionally retains at
+    /// most one sixteenth of pool headroom, leaving room for downstream growth.
     pub fn new(
         max_jobs: usize,
         max_bytes: usize,
+        governed: bool,
         pool: Arc<dyn MemoryPool>,
         metrics: &ExecutionPlanMetricsSet,
     ) -> Arc<Self> {
         Arc::new(Self {
             max_jobs,
             max_bytes,
+            governed,
             pool,
             used: Mutex::new(0),
             peak_bytes: MetricBuilder::new(metrics)
@@ -79,6 +85,25 @@ impl ReadAheadBudget {
             fallbacks: MetricBuilder::new(metrics)
                 .global_counter("scan_read_ahead_demand_fallbacks"),
         })
+    }
+
+    fn limit(&self, used: usize) -> usize {
+        if self.governed
+            && let MemoryLimit::Finite(limit) = self.pool.memory_limit()
+        {
+            // ponytail: pool headroom is a coarse signal; use per-consumer pressure
+            // when the memory-pool API exposes it.
+            // Add our own reservation back when computing headroom so backlog
+            // does not mistake its own allocation for downstream pressure.
+            self.max_bytes.min(
+                limit
+                    .saturating_sub(self.pool.reserved())
+                    .saturating_add(used)
+                    / 16,
+            )
+        } else {
+            self.max_bytes
+        }
     }
 
     fn reserve(self: &Arc<Self>) -> Option<Arc<ReadAheadReservation>> {
@@ -117,7 +142,9 @@ impl ReadAheadReservation {
             self.budget.denied.add(1);
             return false;
         };
-        if target > self.budget.max_bytes || self.reservation.try_resize(bytes).is_err() {
+        if target > self.budget.limit(*used)
+            || self.reservation.try_resize(bytes).is_err()
+        {
             self.budget.denied.add(1);
             return false;
         }
@@ -261,6 +288,7 @@ mod tests {
         let budget = ReadAheadBudget::new(
             2,
             32 << 20,
+            false,
             Arc::clone(&pool),
             &ExecutionPlanMetricsSet::new(),
         );
@@ -274,6 +302,32 @@ mod tests {
         drop(first);
         assert_eq!(pool.reserved(), 0);
         assert_eq!(*budget.used.lock(), 0);
+    }
+
+    #[test]
+    fn budget_reacts_to_downstream_memory_and_releases_reservations() {
+        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1024 << 20));
+        let budget = ReadAheadBudget::new(
+            32,
+            512 << 20,
+            true,
+            Arc::clone(&pool),
+            &ExecutionPlanMetricsSet::new(),
+        );
+        let mut reservations: Vec<_> =
+            (0..4).map(|_| budget.reserve().unwrap()).collect();
+        assert_eq!(pool.reserved(), 64 << 20);
+        assert!(budget.reserve().is_none());
+        let downstream = MemoryConsumer::new("aggregation").register(&pool);
+        downstream.try_grow(512 << 20).unwrap();
+        assert!(budget.reserve().is_none());
+        reservations.truncate(1);
+        let additional = budget.reserve().unwrap();
+        assert!(budget.reserve().is_none());
+        drop((additional, reservations, downstream));
+        assert_eq!(pool.reserved(), 0);
+        assert_eq!(*budget.used.lock(), 0);
+        assert!(budget.reserve().is_some());
     }
 
     #[derive(Debug)]
@@ -332,6 +386,7 @@ mod tests {
         let budget = ReadAheadBudget::new(
             2,
             32 << 20,
+            false,
             Arc::clone(&pool),
             &ExecutionPlanMetricsSet::new(),
         );
