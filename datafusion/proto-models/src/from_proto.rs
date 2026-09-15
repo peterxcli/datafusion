@@ -372,6 +372,7 @@ impl TryFrom<&ParquetOptionsProto> for ParquetOptions {
                 })
                 .transpose()?,
             pushdown_filters: proto.pushdown_filters,
+            progressive_io: proto.progressive_io.unwrap_or(true),
             reorder_filters: proto.reorder_filters,
             force_filter_selections: proto.force_filter_selections,
             data_pagesize_limit: to_usize(
