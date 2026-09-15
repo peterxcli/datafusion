@@ -39,6 +39,7 @@ use crate::{
 };
 use arrow::array::RecordBatch;
 use arrow::datatypes::DataType;
+use datafusion_datasource::file_stream::read_ahead::ReadAheadReservation;
 use datafusion_datasource::morsel::{Morsel, MorselPlan, MorselPlanner, Morselizer};
 use datafusion_physical_expr::projection::ProjectionExprs;
 use datafusion_physical_expr_adapter::replace_columns_with_literals;
@@ -397,6 +398,7 @@ enum ParquetOpenState {
     BuildStream(Box<RowGroupsPrunedParquetOpen>),
     /// Terminal state: the final opened stream is ready to return.
     Ready(BoxStream<'static, Result<RecordBatch>>),
+    LoadInitialData(BoxFuture<'static, Result<BoxStream<'static, Result<RecordBatch>>>>),
     /// Terminal state: reading complete
     Done,
 }
@@ -416,6 +418,7 @@ impl fmt::Debug for ParquetOpenState {
             ParquetOpenState::PruneWithBloomFilters(_) => "PruneWithBloomFilters",
             ParquetOpenState::BuildStream(_) => "BuildStream",
             ParquetOpenState::Ready(_) => "Ready",
+            ParquetOpenState::LoadInitialData(_) => "LoadInitialData",
             ParquetOpenState::Done => "Done",
         };
         f.write_str(state)
@@ -603,10 +606,11 @@ impl ParquetOpenState {
             ParquetOpenState::PruneWithBloomFilters(loaded) => Ok(
                 ParquetOpenState::BuildStream(Box::new(loaded.prune_bloom_filters())),
             ),
-            ParquetOpenState::BuildStream(prepared) => {
-                Ok(ParquetOpenState::Ready(prepared.build_stream()?))
-            }
+            ParquetOpenState::BuildStream(prepared) => prepared.build_stream(),
             ParquetOpenState::Ready(stream) => Ok(ParquetOpenState::Ready(stream)),
+            ParquetOpenState::LoadInitialData(future) => {
+                Ok(ParquetOpenState::LoadInitialData(future))
+            }
             ParquetOpenState::Done => {
                 panic!("ParquetOpenFuture polled after completion");
             }
@@ -720,6 +724,11 @@ impl MorselPlanner for ParquetMorselPlanner {
                     Ok(ParquetOpenState::PruneWithBloomFilters(Box::new(
                         future.await?,
                     )))
+                })))
+            }
+            ParquetOpenState::LoadInitialData(future) => {
+                Ok(Some(Self::schedule_io(async move {
+                    Ok(ParquetOpenState::Ready(future.await?))
                 })))
             }
             ParquetOpenState::Ready(stream) => {
@@ -1364,7 +1373,7 @@ impl BloomFiltersLoadedParquetOpen {
 
 impl RowGroupsPrunedParquetOpen {
     /// Build the final parquet stream once all pruning work is complete.
-    fn build_stream(self) -> Result<BoxStream<'static, Result<RecordBatch>>> {
+    fn build_stream(self) -> Result<ParquetOpenState> {
         let RowGroupsPrunedParquetOpen {
             prepared,
             mut row_groups,
@@ -1700,7 +1709,8 @@ impl RowGroupsPrunedParquetOpen {
             .file_metrics
             .row_groups_pruned_dynamic_filter
             .clone();
-        let stream = PushDecoderStreamState {
+        let read_ahead = prepared.extensions.get_arc::<ReadAheadReservation>();
+        let state = PushDecoderStreamState {
             decoder: Some(decoder),
             active_reader: None,
             rg_plan,
@@ -1716,6 +1726,7 @@ impl RowGroupsPrunedParquetOpen {
                 prepared.partition_index,
             ),
             prefetch_reservation: None,
+            initial_read_ahead: None,
             decoder_projection,
             arrow_reader_metrics,
             predicate_cache_inner_records,
@@ -1727,24 +1738,36 @@ impl RowGroupsPrunedParquetOpen {
             filter_installed,
             row_filter_skipped_fully_matched,
             byte_progress,
-        }
-        .into_stream();
+        };
 
-        // Wrap the stream so a dynamic filter can stop the file scan early, but
-        // only when the pruner is still watching a filter that can change
-        // mid-scan. For a static (or already-complete) predicate the up-front
-        // `prune_file` check already captured everything that can be pruned, so
-        // per-batch re-checking would only add overhead.
-        match prepared.file_pruner {
-            Some(file_pruner) if file_pruner.is_watching() => {
-                Ok(EarlyStoppingStream::new(
-                    stream,
-                    file_pruner,
-                    files_ranges_pruned_statistics,
-                )
-                .boxed())
+        let wrap = move |stream| {
+            // Wrap the stream so a dynamic filter can stop the file scan early, but
+            // only when the pruner is still watching a filter that can change
+            // mid-scan. For a static (or already-complete) predicate the up-front
+            // `prune_file` check already captured everything that can be pruned, so
+            // per-batch re-checking would only add overhead.
+            match prepared.file_pruner {
+                Some(file_pruner) if file_pruner.is_watching() => {
+                    Ok(EarlyStoppingStream::new(
+                        stream,
+                        file_pruner,
+                        files_ranges_pruned_statistics,
+                    )
+                    .boxed())
+                }
+                _ => Ok(stream),
             }
-            _ => Ok(stream),
+        };
+        if let Some(reservation) = read_ahead {
+            Ok(ParquetOpenState::LoadInitialData(
+                async move {
+                    let state = state.prepare_initial_data(reservation).await?;
+                    wrap(state.into_stream())
+                }
+                .boxed(),
+            ))
+        } else {
+            Ok(ParquetOpenState::Ready(wrap(state.into_stream())?))
         }
     }
 }

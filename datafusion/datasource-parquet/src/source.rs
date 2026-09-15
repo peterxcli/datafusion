@@ -16,6 +16,7 @@
 // under the License.
 
 //! ParquetSource implementation for reading parquet files
+use datafusion_datasource::file_stream::read_ahead::ReadAheadBudget;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::sync::Arc;
@@ -321,6 +322,7 @@ pub struct ParquetSource {
     /// in the opener.
     sort_order_for_reorder: Option<LexOrdering>,
     row_group_prefetch: Option<RowGroupPrefetchOptions>,
+    scan_read_ahead: Option<Arc<ReadAheadBudget>>,
 }
 
 impl ParquetSource {
@@ -348,6 +350,7 @@ impl ParquetSource {
             reverse_row_groups: false,
             sort_order_for_reorder: None,
             row_group_prefetch: None,
+            scan_read_ahead: None,
         }
     }
 
@@ -372,6 +375,22 @@ impl ParquetSource {
         self.row_group_prefetch = (max_bytes > 0).then_some(RowGroupPrefetchOptions {
             max_bytes,
             memory_pool,
+        });
+        self
+    }
+
+    /// Experimental shared file-range queue, enabled only for reorderable sibling
+    /// streams. Prepares initial row-group bytes before workers claim each job.
+    /// A fixed cap bounds backlog bytes across the scan.
+    /// This execution-local option is not serialized and does not enable pushdown.
+    pub fn with_scan_read_ahead(
+        mut self,
+        max_jobs: usize,
+        max_bytes: usize,
+        memory_pool: Arc<dyn MemoryPool>,
+    ) -> Self {
+        self.scan_read_ahead = (max_jobs > 0 && max_bytes > 0).then(|| {
+            ReadAheadBudget::new(max_jobs, max_bytes, memory_pool, &self.metrics)
         });
         self
     }
@@ -600,6 +619,13 @@ impl From<ParquetSource> for Arc<dyn FileSource> {
 }
 
 impl FileSource for ParquetSource {
+    fn read_ahead_budget(&self) -> Option<Arc<ReadAheadBudget>> {
+        // Preparing all projected columns early is the upfront-I/O policy.
+        (!self.table_parquet_options.global.progressive_io)
+            .then(|| self.scan_read_ahead.clone())
+            .flatten()
+    }
+
     fn create_file_opener(
         &self,
         _object_store: Arc<dyn ObjectStore>,

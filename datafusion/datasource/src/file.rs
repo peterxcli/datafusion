@@ -92,6 +92,13 @@ pub trait FileSource: Any + Send + Sync {
         Ok(Box::new(FileOpenerMorselizer::new(opener)))
     }
 
+    /// Optional execution-local budget for shared file-range read-ahead.
+    fn read_ahead_budget(
+        &self,
+    ) -> Option<Arc<crate::file_stream::read_ahead::ReadAheadBudget>> {
+        None
+    }
+
     /// Returns the table schema for the overall table (including partition columns, if any)
     ///
     /// This method returns the unprojected schema: the full schema of the data

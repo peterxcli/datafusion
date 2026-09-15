@@ -23,6 +23,7 @@
 
 mod builder;
 mod metrics;
+pub mod read_ahead;
 mod scan_state;
 pub(crate) mod work_source;
 

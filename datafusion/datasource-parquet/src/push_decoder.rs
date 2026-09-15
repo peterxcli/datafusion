@@ -37,6 +37,7 @@
 
 use bytes::Bytes;
 use datafusion_common_runtime::SpawnedTask;
+use datafusion_datasource::file_stream::read_ahead::ReadAheadReservation;
 use datafusion_execution::memory_pool::{MemoryConsumer, MemoryPool, MemoryReservation};
 use std::collections::VecDeque;
 use std::ops::Range;
@@ -414,6 +415,7 @@ pub(crate) struct PushDecoderStreamState {
     pub(crate) pending_prefetch: Option<PrefetchedRowGroup>,
     pub(crate) prefetch_metrics: crate::metrics::PrefetchMetrics,
     pub(crate) prefetch_reservation: Option<MemoryReservation>,
+    pub(crate) initial_read_ahead: Option<Arc<ReadAheadReservation>>,
     /// Per-file projection: the mask installed on every decoder and the
     /// per-batch transform applied by [`Self::project_batch`].
     pub(crate) decoder_projection: DecoderProjection,
@@ -540,6 +542,59 @@ impl RowFilterContext {
 }
 
 impl PushDecoderStreamState {
+    pub(crate) async fn prepare_initial_data(
+        mut self,
+        reservation: Arc<ReadAheadReservation>,
+    ) -> Result<Self> {
+        self.initial_read_ahead = Some(Arc::clone(&reservation));
+        let Some(entry) = self.rg_plan.front() else {
+            return Ok(self);
+        };
+        let group = entry.rg_index;
+        let Some(ranges) = column_ranges(
+            &self.parquet_metadata,
+            entry,
+            if entry.fully_matched {
+                self.decoder_projection.projection_mask()
+            } else {
+                &self.fetch_projection
+            },
+        ) else {
+            return Ok(self);
+        };
+        let ranges = merge_ranges(ranges);
+        let bytes = ranges.iter().try_fold(0usize, |sum, r| {
+            sum.checked_add(usize::try_from(r.end - r.start).ok()?)
+        });
+        let Some(bytes) = bytes else {
+            return Ok(self);
+        };
+        if bytes == 0 || !reservation.try_resize(bytes) {
+            return Ok(self);
+        }
+        let result = self
+            .reader
+            .lock()
+            .await
+            .get_byte_ranges(ranges.clone())
+            .await;
+        match result {
+            Ok(data) => {
+                self.decoder
+                    .as_mut()
+                    .expect("decoder present")
+                    .push_ranges(ranges, data)?;
+                reservation.record_read(bytes);
+                self.upfront_row_group = Some(group);
+                self.initial_read_ahead = Some(reservation);
+            }
+            Err(error) => {
+                debug!("Initial scan read-ahead failed, retrying on demand: {error}")
+            }
+        }
+        Ok(self)
+    }
+
     /// Drive the state machine to completion as a [`futures::Stream`] of record batches.
     ///
     /// The returned stream is fused and boxed so the caller can wrap it (for
@@ -788,6 +843,7 @@ impl PushDecoderStreamState {
                         self.byte_progress.credit(entry.bytes);
                     }
                     self.active_reader = Some(reader);
+                    self.initial_read_ahead = None;
                     // The extracted reader now owns required bytes. Release any
                     // unused speculation (e.g. pages removed by a row filter).
                     if !self.progressive_io || self.prefetch_reservation.is_some() {
@@ -1443,6 +1499,114 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(rows, 1499); // RG0 already active; 499 rows in RG2 pass the filter.
+            assert_pool_released(&pool).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_read_ahead_preserves_rows_falls_back_and_cancels() {
+        use datafusion_datasource::file_scan_config::FileScanConfigBuilder;
+        use datafusion_datasource::source::DataSourceExec;
+        use datafusion_datasource::{PartitionedFile, file_groups::FileGroup};
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        use datafusion_execution::{
+            TaskContext, config::SessionConfig, object_store::ObjectStoreUrl,
+        };
+        use datafusion_physical_plan::ExecutionPlan;
+
+        for (budget, limit) in [
+            (0, None),
+            (1, None),
+            (32 << 20, None),
+            (32 << 20, Some(123)),
+        ] {
+            let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(512 << 20));
+            let (data, metadata, schema) = build_three_rg_file_data();
+            let files = (0..4)
+                .map(|i| {
+                    PartitionedFile::new(format!("queue{i}.parquet"), data.len() as u64)
+                })
+                .collect();
+            let control = Arc::new(ReadControl {
+                block_second: limit.is_some(),
+                ..Default::default()
+            });
+            // RG1 is fully rejected inside arrow-rs, without a reader being returned.
+            let predicate = Arc::new(BinaryExpr::new(
+                Arc::new(BinaryExpr::new(
+                    Arc::new(Column::new("v", 0)),
+                    Operator::Modulo,
+                    lit(2000i64),
+                )),
+                Operator::Lt,
+                lit(1000i64),
+            ));
+            let source = crate::source::ParquetSource::new(schema)
+                .with_progressive_io(false)
+                .with_row_group_prefetch(1 << 20, Arc::clone(&pool))
+                .with_scan_read_ahead(4, budget, Arc::clone(&pool))
+                .with_enable_page_index(false)
+                .with_pushdown_filters(true)
+                .with_predicate(predicate)
+                .with_parquet_file_reader_factory(Arc::new(TestReader {
+                    data,
+                    metadata,
+                    control,
+                }));
+            let config = FileScanConfigBuilder::new(
+                ObjectStoreUrl::local_filesystem(),
+                Arc::new(source),
+            )
+            .with_file_group(FileGroup::new(files))
+            .with_limit(limit)
+            .build();
+            let exec = DataSourceExec::new(Arc::new(config));
+            let task = TaskContext::default()
+                .with_session_config(SessionConfig::new().with_batch_size(100));
+            let mut stream = exec.execute(0, Arc::new(task)).unwrap();
+            let values = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let mut values = Vec::new();
+                while let Some(batch) = stream.next().await {
+                    values.extend_from_slice(
+                        batch
+                            .unwrap()
+                            .column(0)
+                            .as_any()
+                            .downcast_ref::<Int64Array>()
+                            .unwrap()
+                            .values(),
+                    );
+                }
+                values
+            })
+            .await
+            .unwrap();
+            if let Some(limit) = limit {
+                assert_eq!(values.len(), limit);
+            } else {
+                let mut expected: Vec<i64> =
+                    (0..4).flat_map(|_| (0..1000).chain(2000..3000)).collect();
+                let mut values = values;
+                values.sort_unstable();
+                expected.sort_unstable();
+                assert_eq!(values, expected);
+            }
+            let metrics = exec.metrics().unwrap();
+            let metric = |name| {
+                metrics
+                    .sum_by_name(name)
+                    .map(|value| value.as_usize())
+                    .unwrap_or(0)
+            };
+            if budget >= 32 << 20 {
+                assert!(metric("scan_read_ahead_jobs") > 0);
+                assert!(metric("scan_read_ahead_initial_bytes") > 0);
+                assert!(metric("scan_read_ahead_peak_bytes") <= budget);
+            } else {
+                assert_eq!(metric("scan_read_ahead_jobs"), 0);
+            }
+            drop(stream);
+            drop(exec);
             assert_pool_released(&pool).await;
         }
     }
