@@ -631,39 +631,47 @@ impl PushDecoderStreamState {
                 }
             }
 
-            // Apply speculation only after runtime pruning has chosen the next
-            // row group. A pruned group's task is aborted and its bytes discarded.
+            // At a boundary peek names the next group. During predicate
+            // evaluation it already names the group after the active one.
             if let Some(prefetch) = self.pending_prefetch.take() {
-                let decoder = self.decoder.as_mut().expect("decoder present");
-                match decoder.peek_next_row_group() {
-                    Ok(Some(next)) if next == prefetch.row_group => {
-                        let result = {
-                            let _timer = self.prefetch_metrics.wait_time.timer();
-                            prefetch.task.join_unwind().await
-                        };
-                        match result {
-                            Ok(Ok((data, reservation))) => {
-                                if let Err(e) = decoder.push_ranges(prefetch.ranges, data)
-                                {
-                                    return Some((Err(e.into()), self));
-                                }
-                                self.upfront_row_group = Some(prefetch.row_group);
-                                self.prefetch_reservation = Some(reservation);
-                            }
-                            // A speculative error must not fail a scan that would
-                            // not need those bytes. Let demand reads retry normally.
-                            Ok(Err(e)) => debug!("Parquet prefetch failed: {e}"),
-                            Err(e) => {
-                                return Some((
-                                    Err(DataFusionError::External(Box::new(e))),
-                                    self,
-                                ));
-                            }
+                let next = self
+                    .decoder
+                    .as_ref()
+                    .expect("decoder present")
+                    .peek_next_row_group();
+                match next {
+                    Ok(Some(next)) if at_boundary && next == prefetch.row_group => {
+                        if let Err(e) = self.apply_prefetch(prefetch).await {
+                            return Some((Err(e), self));
                         }
+                    }
+                    Ok(_)
+                        if self
+                            .rg_plan
+                            .iter()
+                            .any(|entry| entry.rg_index == prefetch.row_group) =>
+                    {
+                        self.pending_prefetch = Some(prefetch);
                     }
                     Ok(_) => {}
                     Err(e) => return Some((Err(e.into()), self)),
                 }
+            }
+
+            // Once all current bytes are available, overlap the next read with
+            // pushed-down predicate evaluation inside try_next_reader as well.
+            if !self.progressive_io
+                && self.row_filter_context.is_some()
+                && self.pending_prefetch.is_none()
+                && let Some(current) = self.upfront_row_group
+                && self
+                    .rg_plan
+                    .front()
+                    .is_some_and(|entry| entry.rg_index == current)
+                && let Some(next) = self.rg_plan.get(1).map(|entry| entry.rg_index)
+                && self.start_prefetch(next)
+            {
+                tokio::task::yield_now().await;
             }
 
             // Step 3: drive the decoder.
@@ -698,6 +706,22 @@ impl PushDecoderStreamState {
                                 &mut self.byte_progress,
                             ) {
                                 return Some((Err(e), self));
+                            }
+                            if self
+                                .pending_prefetch
+                                .as_ref()
+                                .is_some_and(|prefetch| prefetch.row_group == row_group)
+                            {
+                                // A fully filtered group can advance internally,
+                                // so consume its successor's bytes here as well.
+                                let prefetch = self
+                                    .pending_prefetch
+                                    .take()
+                                    .expect("matched prefetch");
+                                if let Err(e) = self.apply_prefetch(prefetch).await {
+                                    return Some((Err(e), self));
+                                }
+                                continue;
                             }
                             if self.upfront_row_group != Some(row_group) {
                                 decoder.clear_all_ranges();
@@ -770,33 +794,12 @@ impl PushDecoderStreamState {
                         decoder.clear_all_ranges();
                         self.prefetch_reservation = None;
                     }
-                    if let Some(options) = &self.row_group_prefetch {
+                    if self.pending_prefetch.is_none() {
                         match decoder.peek_next_row_group() {
-                            Ok(Some(next)) => {
-                                let entry = self
-                                    .rg_plan
-                                    .iter()
-                                    .find(|entry| entry.rg_index == next)
-                                    .expect("next row group is in the access plan");
-                                self.pending_prefetch = PrefetchedRowGroup::start(
-                                    entry,
-                                    &self.parquet_metadata,
-                                    if entry.fully_matched {
-                                        self.decoder_projection.projection_mask()
-                                    } else {
-                                        &self.fetch_projection
-                                    },
-                                    options,
-                                    Arc::clone(&self.reader),
-                                    &self.prefetch_metrics,
-                                );
-                                if self.pending_prefetch.is_some() {
-                                    // Let the I/O task start before this worker
-                                    // continues decoding or consuming batches.
-                                    tokio::task::yield_now().await;
-                                }
+                            Ok(Some(next)) if self.start_prefetch(next) => {
+                                tokio::task::yield_now().await;
                             }
-                            Ok(None) => {}
+                            Ok(_) => {}
                             Err(e) => return Some((Err(e.into()), self)),
                         }
                     }
@@ -807,6 +810,52 @@ impl PushDecoderStreamState {
                 }
             }
         }
+    }
+
+    async fn apply_prefetch(&mut self, prefetch: PrefetchedRowGroup) -> Result<()> {
+        let result = {
+            let _timer = self.prefetch_metrics.wait_time.timer();
+            prefetch.task.join_unwind().await
+        };
+        match result {
+            Ok(Ok((data, reservation))) => {
+                self.decoder
+                    .as_mut()
+                    .expect("decoder present")
+                    .push_ranges(prefetch.ranges, data)?;
+                self.upfront_row_group = Some(prefetch.row_group);
+                self.prefetch_reservation = Some(reservation);
+            }
+            // Speculative read failures retry through the ordinary demand path.
+            Ok(Err(e)) => debug!("Parquet prefetch failed: {e}"),
+            Err(e) => return Err(DataFusionError::External(Box::new(e))),
+        }
+        Ok(())
+    }
+
+    /// Reserve and start at most one future row group, before CPU work continues.
+    fn start_prefetch(&mut self, next: usize) -> bool {
+        let Some(options) = &self.row_group_prefetch else {
+            return false;
+        };
+        let entry = self
+            .rg_plan
+            .iter()
+            .find(|entry| entry.rg_index == next)
+            .expect("next row group is in the access plan");
+        self.pending_prefetch = PrefetchedRowGroup::start(
+            entry,
+            &self.parquet_metadata,
+            if entry.fully_matched {
+                self.decoder_projection.projection_mask()
+            } else {
+                &self.fetch_projection
+            },
+            options,
+            Arc::clone(&self.reader),
+            &self.prefetch_metrics,
+        );
+        self.pending_prefetch.is_some()
     }
 
     /// Keep `rg_plan.front()` aligned with the row group the decoder will emit
@@ -1357,41 +1406,100 @@ mod tests {
     #[tokio::test]
     async fn prefetch_cancels_a_row_group_pruned_while_decoding() {
         use datafusion_execution::memory_pool::GreedyMemoryPool;
-        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
-        let control = Arc::new(ReadControl {
-            block_second: true,
-            ..Default::default()
-        });
-        let dynamic = Arc::new(DynamicFilterPhysicalExpr::new(
+        for progressive in [true, false] {
+            let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
+            let control = Arc::new(ReadControl {
+                block_second: true,
+                ..Default::default()
+            });
+            let dynamic = Arc::new(DynamicFilterPhysicalExpr::new(
+                vec![Arc::new(Column::new("v", 0))],
+                gt_predicate(-1),
+            ));
+            let mut stream = io_test_stream(
+                1 << 20,
+                Arc::clone(&pool),
+                Arc::clone(&control),
+                None,
+                Some(Arc::clone(&dynamic) as _),
+                progressive,
+            );
+            stream.next().await.unwrap().unwrap();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                control.started.notified(),
+            )
+            .await
+            .unwrap();
+            dynamic.update(gt_predicate(2500)).unwrap();
+            // RG1 is now prunable. Its blocked prefetch must be cancelled, not awaited.
+            let rows = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let mut rows = 100;
+                while let Some(batch) = stream.next().await {
+                    rows += batch.unwrap().num_rows();
+                }
+                rows
+            })
+            .await
+            .unwrap();
+            assert_eq!(rows, 1499); // RG0 already active; 499 rows in RG2 pass the filter.
+            assert_pool_released(&pool).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn upfront_prefetch_starts_before_evaluating_row_filters() {
+        use datafusion_common::config::ConfigOptions;
+        use datafusion_execution::memory_pool::GreedyMemoryPool;
+        use datafusion_expr::{ColumnarValue, Volatility, create_udf};
+        use datafusion_physical_expr::ScalarFunctionExpr;
+        use std::sync::atomic::Ordering;
+
+        let control = Arc::new(ReadControl::default());
+        let reads = Arc::clone(&control);
+        let check = create_udf(
+            "check_prefetch_started",
+            vec![DataType::Int64],
+            DataType::Boolean,
+            Volatility::Volatile,
+            Arc::new(move |args| {
+                if !matches!(&args[0], ColumnarValue::Array(array) if array.len() >= 100)
+                {
+                    return Ok(ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))));
+                }
+                assert!(
+                    reads.calls.load(Ordering::SeqCst) >= 2,
+                    "next-row-group read must start before predicate CPU work"
+                );
+                Ok(ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))))
+            }),
+        );
+        let predicate = Arc::new(ScalarFunctionExpr::new(
+            "check_prefetch_started",
+            Arc::new(check),
             vec![Arc::new(Column::new("v", 0))],
-            gt_predicate(-1),
+            Arc::new(Field::new(
+                "check_prefetch_started",
+                DataType::Boolean,
+                false,
+            )),
+            Arc::new(ConfigOptions::default()),
         ));
-        let mut stream = prefetch_test_stream(
+        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
+        let mut stream = io_test_stream(
             1 << 20,
             Arc::clone(&pool),
             Arc::clone(&control),
             None,
-            Some(Arc::clone(&dynamic) as _),
+            Some(predicate),
+            false,
         );
-        stream.next().await.unwrap().unwrap();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            control.started.notified(),
-        )
-        .await
-        .unwrap();
-        dynamic.update(gt_predicate(2500)).unwrap();
-        // RG1 is now prunable. Its blocked prefetch must be cancelled, not awaited.
-        let rows = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            let mut rows = 100;
-            while let Some(batch) = stream.next().await {
-                rows += batch.unwrap().num_rows();
-            }
-            rows
-        })
-        .await
-        .unwrap();
-        assert_eq!(rows, 1499); // RG0 already active; 499 rows in RG2 pass the filter.
+        let mut rows = 0;
+        while let Some(batch) = stream.next().await {
+            rows += batch.unwrap().num_rows();
+        }
+        assert_eq!(rows, 3000);
+        assert_eq!(control.calls.load(Ordering::SeqCst), 3);
         assert_pool_released(&pool).await;
     }
 
@@ -1495,7 +1603,11 @@ mod tests {
                     } else {
                         5
                     };
-                    assert_eq!(control.calls.load(Ordering::SeqCst), expected_calls);
+                    assert_eq!(
+                        control.calls.load(Ordering::SeqCst),
+                        expected_calls,
+                        "empty={empty_group}, progressive={progressive}, budget={budget}"
+                    );
                     assert_pool_released(&pool).await;
                 }
             }
