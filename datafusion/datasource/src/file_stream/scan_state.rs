@@ -17,6 +17,7 @@
 
 use datafusion_common::internal_datafusion_err;
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use crate::morsel::{Morsel, MorselPlanner, Morselizer, PendingMorselPlanner};
@@ -67,7 +68,7 @@ pub(super) struct ScanState {
     /// Remaining row limit, if any.
     remain: Option<usize>,
     /// The morselizer used to plan files.
-    morselizer: Box<dyn Morselizer>,
+    morselizer: Arc<dyn Morselizer>,
     /// Behavior if opening or scanning a file fails.
     on_error: OnError,
     /// CPU-ready planners for the current file.
@@ -96,7 +97,7 @@ impl ScanState {
         Self {
             work_source,
             remain,
-            morselizer,
+            morselizer: morselizer.into(),
             on_error,
             ready_planners: Default::default(),
             ready_morsels: Default::default(),
@@ -125,6 +126,12 @@ impl ScanState {
     pub(super) fn poll_scan(&mut self, cx: &mut Context<'_>) -> ScanAndReturn {
         let _processing_timer: ScopedTimerGuard<'_> =
             self.metrics.time_processing.timer();
+
+        if self.reader.is_none()
+            && let WorkSource::Shared(shared) = &self.work_source
+        {
+            shared.fill_read_ahead(&self.morselizer);
+        }
 
         // Try and resolve outstanding IO first. If it is still pending, check
         // the current reader or ready morsels before yielding. New planning
@@ -263,6 +270,32 @@ impl ScanState {
                     }
                 }
             };
+        }
+
+        if let WorkSource::Shared(shared) = &self.work_source
+            && let Some(queue) = shared.read_ahead()
+        {
+            match queue.poll_ready(cx) {
+                Poll::Ready(Some(Ok(stream))) => {
+                    self.metrics.files_opened.add(1);
+                    self.metrics.time_scanning_total.start();
+                    self.metrics.time_scanning_until_data.start();
+                    self.reader = Some(stream);
+                    return ScanAndReturn::Continue;
+                }
+                Poll::Ready(Some(Err(error))) => {
+                    self.metrics.file_open_errors.add(1);
+                    return match self.on_error {
+                        OnError::Skip => {
+                            self.metrics.files_processed.add(1);
+                            ScanAndReturn::Continue
+                        }
+                        OnError::Fail => ScanAndReturn::Error(error),
+                    };
+                }
+                Poll::Pending => return ScanAndReturn::Return(Poll::Pending),
+                Poll::Ready(None) => {} // No backlog: ordinary demand planning guarantees progress.
+            }
         }
 
         // No outstanding work remains, so begin planning the next unopened file.

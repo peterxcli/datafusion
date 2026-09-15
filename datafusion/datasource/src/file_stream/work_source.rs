@@ -71,19 +71,10 @@ pub(crate) struct SharedWorkSource {
 #[derive(Debug, Default)]
 pub(super) struct SharedWorkSourceInner {
     files: Mutex<VecDeque<PartitionedFile>>,
+    read_ahead: Option<super::read_ahead::ReadAheadQueue>,
 }
 
 impl SharedWorkSource {
-    /// Create a shared work source containing the provided unopened files.
-    pub(crate) fn new(files: impl IntoIterator<Item = PartitionedFile>) -> Self {
-        let files = files.into_iter().collect();
-        Self {
-            inner: Arc::new(SharedWorkSourceInner {
-                files: Mutex::new(files),
-            }),
-        }
-    }
-
     /// Create a shared work source for the unopened files in `config`.
     ///
     /// Files are reordered by the file source (e.g. by statistics for TopK)
@@ -97,13 +88,40 @@ impl SharedWorkSource {
             .cloned()
             .collect();
         let files = config.file_source.reorder_files(files);
-        Self::new(files)
+        Self {
+            inner: Arc::new(SharedWorkSourceInner {
+                files: Mutex::new(files.into()),
+                read_ahead: config
+                    .file_source
+                    .read_ahead_budget()
+                    .map(super::read_ahead::ReadAheadQueue::new),
+            }),
+        }
+    }
+
+    pub(super) fn read_ahead(&self) -> Option<&super::read_ahead::ReadAheadQueue> {
+        self.inner.read_ahead.as_ref()
+    }
+
+    pub(super) fn fill_read_ahead(
+        &self,
+        morselizer: &Arc<dyn crate::morsel::Morselizer>,
+    ) {
+        if let Some(queue) = self.read_ahead() {
+            queue.fill(&self.inner.files, morselizer);
+        }
     }
 
     /// Pop the next file from the shared work queue.
     ///
     /// Returns `None` if the queue is empty
     fn pop_front(&self) -> Option<PartitionedFile> {
-        self.inner.files.lock().pop_front()
+        let file = self.inner.files.lock().pop_front();
+        if file.is_some()
+            && let Some(queue) = self.read_ahead()
+        {
+            queue.demand_fallback();
+        }
+        file
     }
 }
