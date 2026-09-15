@@ -381,16 +381,23 @@ impl ParquetSource {
 
     /// Experimental shared file-range queue, enabled only for reorderable sibling
     /// streams. Prepares initial row-group bytes before workers claim each job.
-    /// A fixed cap bounds backlog bytes across the scan.
+    /// A fixed cap bounds backlog bytes; governed mode also reacts to pool headroom.
     /// This execution-local option is not serialized and does not enable pushdown.
     pub fn with_scan_read_ahead(
         mut self,
         max_jobs: usize,
         max_bytes: usize,
+        governed: bool,
         memory_pool: Arc<dyn MemoryPool>,
     ) -> Self {
         self.scan_read_ahead = (max_jobs > 0 && max_bytes > 0).then(|| {
-            ReadAheadBudget::new(max_jobs, max_bytes, memory_pool, &self.metrics)
+            ReadAheadBudget::new(
+                max_jobs,
+                max_bytes,
+                governed,
+                memory_pool,
+                &self.metrics,
+            )
         });
         self
     }

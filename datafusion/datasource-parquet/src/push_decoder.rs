@@ -1514,11 +1514,12 @@ mod tests {
         };
         use datafusion_physical_plan::ExecutionPlan;
 
-        for (budget, limit) in [
-            (0, None),
-            (1, None),
-            (32 << 20, None),
-            (32 << 20, Some(123)),
+        for (budget, governed, limit) in [
+            (0, false, None),
+            (1, false, None),
+            (32 << 20, false, None),
+            (32 << 20, true, None),
+            (32 << 20, false, Some(123)),
         ] {
             let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(512 << 20));
             let (data, metadata, schema) = build_three_rg_file_data();
@@ -1544,7 +1545,7 @@ mod tests {
             let source = crate::source::ParquetSource::new(schema)
                 .with_progressive_io(false)
                 .with_row_group_prefetch(1 << 20, Arc::clone(&pool))
-                .with_scan_read_ahead(4, budget, Arc::clone(&pool))
+                .with_scan_read_ahead(4, budget, governed, Arc::clone(&pool))
                 .with_enable_page_index(false)
                 .with_pushdown_filters(true)
                 .with_predicate(predicate)
