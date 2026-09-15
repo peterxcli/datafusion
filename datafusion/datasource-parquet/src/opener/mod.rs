@@ -29,7 +29,7 @@ use crate::metrics::{ByteProgress, RowFilterSkippedFullyMatchedMetric};
 use crate::page_filter::PagePruningAccessPlanFilter;
 use crate::push_decoder::{
     DecoderBuilderConfig, InitialDecoderState, PushDecoderStreamState, RgPlanEntry,
-    RowGroupPruner,
+    RowGroupPrefetchOptions, RowGroupPruner,
 };
 use crate::row_group_filter::{RowGroupAccessPlanFilter, row_group_in_range};
 use crate::{
@@ -236,6 +236,7 @@ fn validate_predicate_does_not_reference_virtual_columns(
 /// as an explicit state machine -- see [`ParquetOpenState`] for details.
 #[derive(Clone)]
 pub(super) struct ParquetMorselizer {
+    pub(crate) row_group_prefetch: Option<RowGroupPrefetchOptions>,
     pub(crate) progressive_io: bool,
     /// Execution partition index
     pub(crate) partition_index: usize,
@@ -422,6 +423,7 @@ impl fmt::Debug for ParquetOpenState {
 }
 
 struct PreparedParquetOpen {
+    row_group_prefetch: Option<RowGroupPrefetchOptions>,
     progressive_io: bool,
     partition_index: usize,
     partitioned_file: PartitionedFile,
@@ -856,6 +858,7 @@ impl ParquetMorselizer {
             metrics: self.metrics.clone(),
             parquet_file_reader_factory: Arc::clone(&self.parquet_file_reader_factory),
             async_file_reader,
+            row_group_prefetch: self.row_group_prefetch.clone(),
             progressive_io: self.progressive_io,
             batch_size: self.batch_size,
             logical_file_schema: Arc::clone(&logical_file_schema),
@@ -1526,20 +1529,21 @@ impl RowGroupsPrunedParquetOpen {
                 decoder_limit: prepared.limit,
             };
 
-            let mut fetch_selections = if !prepared.progressive_io {
-                access_plan
-                    .inner()
-                    .iter()
-                    .map(|access| match access {
-                        crate::RowGroupAccess::Selection(selection) => {
-                            Some(selection.clone())
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                vec![]
-            };
+            let mut fetch_selections =
+                if !prepared.progressive_io || prepared.row_group_prefetch.is_some() {
+                    access_plan
+                        .inner()
+                        .iter()
+                        .map(|access| match access {
+                            crate::RowGroupAccess::Selection(selection) => {
+                                Some(selection.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![]
+                };
             let prepared_access_plan = prepare_access_plan(access_plan)?;
             // #24355: a row selection (from page-index pruning, or an externally
             // supplied `ParquetRowSelection`) is carried by the decoder as one
@@ -1700,11 +1704,18 @@ impl RowGroupsPrunedParquetOpen {
             decoder: Some(decoder),
             active_reader: None,
             rg_plan,
-            reader: prepared.async_file_reader,
+            reader: Arc::new(tokio::sync::Mutex::new(prepared.async_file_reader)),
+            row_group_prefetch: prepared.row_group_prefetch,
             progressive_io: prepared.progressive_io,
             fetch_projection,
             upfront_row_group: None,
             parquet_metadata: Arc::clone(reader_metadata.metadata()),
+            pending_prefetch: None,
+            prefetch_metrics: crate::metrics::PrefetchMetrics::new(
+                &prepared.metrics,
+                prepared.partition_index,
+            ),
+            prefetch_reservation: None,
             decoder_projection,
             arrow_reader_metrics,
             predicate_cache_inner_records,
@@ -2337,6 +2348,7 @@ mod test {
             )?;
 
             Ok(ParquetMorselizer {
+                row_group_prefetch: None,
                 progressive_io: true,
                 partition_index: self.partition_index,
                 projection,
@@ -3431,19 +3443,30 @@ mod test {
         .with_extension(access_plan);
 
         for progressive_io in [false, true] {
-            for (reverse, expected) in [
-                (false, vec![3, 4, 5, 6, 7, 8, 9, 10]),
-                (true, vec![9, 10, 5, 6, 7, 8, 3, 4]),
-            ] {
-                let mut opener = ParquetMorselizerBuilder::new()
-                    .with_store(Arc::clone(&store))
-                    .with_schema(Arc::clone(&schema))
-                    .with_projection_indices(&[0])
-                    .with_reverse_row_groups(reverse)
-                    .build();
-                opener.progressive_io = progressive_io;
-                let stream = open_file(&opener, file.clone()).await.unwrap();
-                assert_eq!(collect_int32_values(stream).await, expected);
+            for prefetch in [false, true] {
+                for (reverse, expected) in [
+                    (false, vec![3, 4, 5, 6, 7, 8, 9, 10]),
+                    (true, vec![9, 10, 5, 6, 7, 8, 3, 4]),
+                ] {
+                    let mut opener = ParquetMorselizerBuilder::new()
+                        .with_store(Arc::clone(&store))
+                        .with_schema(Arc::clone(&schema))
+                        .with_projection_indices(&[0])
+                        .with_reverse_row_groups(reverse)
+                        .build();
+                    opener.progressive_io = progressive_io;
+                    opener.row_group_prefetch =
+                        prefetch.then(|| RowGroupPrefetchOptions {
+                            max_bytes: 1 << 20,
+                            memory_pool: Arc::new(
+                                datafusion_execution::memory_pool::GreedyMemoryPool::new(
+                                    1 << 20,
+                                ),
+                            ),
+                        });
+                    let stream = open_file(&opener, file.clone()).await.unwrap();
+                    assert_eq!(collect_int32_values(stream).await, expected);
+                }
             }
         }
     }

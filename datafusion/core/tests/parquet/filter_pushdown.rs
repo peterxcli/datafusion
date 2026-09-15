@@ -814,9 +814,11 @@ async fn pushed_down_predicate_reports_the_original_error() {
 async fn upfront_io_preserves_page_pruning_from_session_configuration() {
     use arrow::array::{Int64Array, StringArray, StructArray};
     use arrow::datatypes::{DataType, Field, Schema};
-    use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
+    use datafusion_common::tree_node::{Transformed, TreeNode};
+    use datafusion_datasource::file_scan_config::FileScanConfigBuilder;
     use datafusion_datasource::source::DataSourceExec;
     use datafusion_datasource_parquet::source::ParquetSource;
+    use datafusion_execution::memory_pool::GreedyMemoryPool;
     use parquet::arrow::ArrowWriter;
     use parquet::file::properties::EnabledStatistics;
     use std::sync::Arc;
@@ -904,82 +906,104 @@ async fn upfront_io_preserves_page_pruning_from_session_configuration() {
                 for (pushdown, progressive) in
                     [(false, true), (true, true), (true, false)]
                 {
-                    let config = SessionConfig::new()
-                        .with_target_partitions(1)
-                        .with_batch_size(127);
-                    let ctx = SessionContext::new_with_config(config);
-                    for (key, value) in [
-                        ("pushdown_filters", pushdown),
-                        ("progressive_io", progressive),
-                    ] {
-                        ctx.sql(&format!(
-                            "SET datafusion.execution.parquet.{key} = {value}"
-                        ))
-                        .await
-                        .unwrap()
-                        .collect()
-                        .await
-                        .unwrap();
-                    }
-                    ctx.register_parquet(
-                        "t",
-                        path.to_str().unwrap(),
-                        ParquetReadOptions::default(),
-                    )
-                    .await
-                    .unwrap();
-                    let key = if predicate_in_output { "key," } else { "" };
-                    let plan = ctx.sql(&format!("SELECT {key} payload, nested.value AS value FROM t WHERE key < 100 ORDER BY value"))
-                    .await.unwrap().create_physical_plan().await.unwrap();
-                    let mut scans = 0;
-                    plan.apply(|plan| {
-                        if let Some(exec) = plan.downcast_ref::<DataSourceExec>()
-                            && let Some((_, source)) =
-                                exec.downcast_to_file_source::<ParquetSource>()
-                        {
-                            scans += 1;
-                            assert_eq!(
-                                source.table_parquet_options().global.progressive_io,
-                                progressive
-                            );
+                    for budget in [0, 1 << 20] {
+                        let config = SessionConfig::new()
+                            .with_target_partitions(1)
+                            .with_batch_size(127);
+                        let ctx = SessionContext::new_with_config(config);
+                        for (key, value) in [
+                            ("pushdown_filters", pushdown),
+                            ("progressive_io", progressive),
+                        ] {
+                            ctx.sql(&format!(
+                                "SET datafusion.execution.parquet.{key} = {value}"
+                            ))
+                            .await
+                            .unwrap()
+                            .collect()
+                            .await
+                            .unwrap();
                         }
-                        Ok(TreeNodeRecursion::Continue)
-                    })
-                    .unwrap();
-                    assert_eq!(scans, 1);
-                    let batches =
-                        collect(Arc::clone(&plan), ctx.task_ctx()).await.unwrap();
-                    let batch = concat_batches(&plan.schema(), &batches).unwrap();
-                    let values = batch
-                        .column(batch.num_columns() - 1)
-                        .as_any()
-                        .downcast_ref::<Int64Array>()
+                        ctx.register_parquet(
+                            "t",
+                            path.to_str().unwrap(),
+                            ParquetReadOptions::default(),
+                        )
+                        .await
                         .unwrap();
-                    assert_eq!(values.values().as_ref(), expected.as_slice());
-                    if let Some(expected) = &expected_batch {
-                        assert_eq!(&batch, expected);
-                    } else {
-                        expected_batch = Some(batch);
-                    }
-                    let metrics = TestParquetFile::parquet_metrics(&plan).unwrap();
-                    let bytes = get_value(&metrics, "bytes_scanned");
-                    if indexed && clustered {
-                        assert!(
-                            get_pruning_metrics(&metrics, "page_index_rows_pruned").0 > 0
-                        );
-                    }
-                    if !predicate_in_output {
-                        if let Some(expected) = baseline_bytes {
-                            assert_eq!(
-                                bytes, expected,
-                                "clustered={clustered}, indexed={indexed}, pushdown={pushdown}, progressive={progressive}"
-                            );
+                        let key = if predicate_in_output { "key," } else { "" };
+                        let plan = ctx.sql(&format!("SELECT {key} payload, nested.value AS value FROM t WHERE key < 100 ORDER BY value"))
+                        .await.unwrap().create_physical_plan().await.unwrap();
+                        let mut scans = 0;
+                        let plan = plan
+                            .transform_up(|plan| {
+                                if let Some(exec) = plan.downcast_ref::<DataSourceExec>()
+                                    && let Some((config, source)) =
+                                        exec.downcast_to_file_source::<ParquetSource>()
+                                {
+                                    scans += 1;
+                                    assert_eq!(
+                                        source
+                                            .table_parquet_options()
+                                            .global
+                                            .progressive_io,
+                                        progressive
+                                    );
+                                    let source = source.clone().with_row_group_prefetch(
+                                        budget,
+                                        Arc::new(GreedyMemoryPool::new(1 << 20)),
+                                    );
+                                    let config =
+                                        FileScanConfigBuilder::from(config.clone())
+                                            .with_source(Arc::new(source))
+                                            .build();
+                                    return Ok(Transformed::yes(Arc::new(
+                                        exec.clone().with_data_source(Arc::new(config)),
+                                    )));
+                                }
+                                Ok(Transformed::no(plan))
+                            })
+                            .unwrap()
+                            .data;
+                        assert_eq!(scans, 1);
+                        let batches =
+                            collect(Arc::clone(&plan), ctx.task_ctx()).await.unwrap();
+                        let batch = concat_batches(&plan.schema(), &batches).unwrap();
+                        let values = batch
+                            .column(batch.num_columns() - 1)
+                            .as_any()
+                            .downcast_ref::<Int64Array>()
+                            .unwrap();
+                        assert_eq!(values.values().as_ref(), expected.as_slice());
+                        if let Some(expected) = &expected_batch {
+                            assert_eq!(&batch, expected);
                         } else {
-                            baseline_bytes = Some(bytes);
+                            expected_batch = Some(batch);
                         }
-                    }
-                    if pushdown {
-                        assert!(get_value(&metrics, "pushdown_rows_pruned") > 0);
+                        let metrics = TestParquetFile::parquet_metrics(&plan).unwrap();
+                        let bytes = get_value(&metrics, "bytes_scanned");
+                        if indexed && clustered {
+                            assert!(
+                                get_pruning_metrics(&metrics, "page_index_rows_pruned").0
+                                    > 0
+                            );
+                        }
+                        if !predicate_in_output {
+                            if let Some(expected) = baseline_bytes {
+                                assert_eq!(
+                                    bytes, expected,
+                                    "clustered={clustered}, indexed={indexed}, pushdown={pushdown}, progressive={progressive}, budget={budget}"
+                                );
+                            } else {
+                                baseline_bytes = Some(bytes);
+                            }
+                        }
+                        if budget > 0 {
+                            assert!(get_value(&metrics, "prefetch_bytes") > 0);
+                        }
+                        if pushdown {
+                            assert!(get_value(&metrics, "pushdown_rows_pruned") > 0);
+                        }
                     }
                 }
             }
