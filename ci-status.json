@@ -1,0 +1,51 @@
+{
+  "checked_at_utc": "2026-09-15T19:57:55.192225+00:00",
+  "prs": [
+    {
+      "pr": 4,
+      "head": "b8c7ba40874d57953620d44fe9b14d1011f50940",
+      "state": "OPEN",
+      "draft": true,
+      "pending_checks": 0,
+      "failures": []
+    },
+    {
+      "pr": 5,
+      "head": "263a9bd74f7f7fc5c26e13a82df206da12b2fca9",
+      "state": "OPEN",
+      "draft": true,
+      "pending_checks": 0,
+      "failures": [
+        {
+          "name": "security_audit",
+          "url": "https://github.com/peterxcli/datafusion/actions/runs/35008777981/job/104515158523",
+          "reason": "Unchanged baseline rustls 0.23.39 is affected by RUSTSEC-2026-0285"
+        }
+      ]
+    },
+    {
+      "pr": 7,
+      "head": "f3ebd935ad067b6a5ab453fd8770a87d3733099d",
+      "state": "OPEN",
+      "draft": true,
+      "pending_checks": 0,
+      "failures": []
+    },
+    {
+      "pr": 8,
+      "head": "06901f6fc8c9ecd96be7a61dc9b914a0bef6df93",
+      "state": "OPEN",
+      "draft": true,
+      "pending_checks": 0,
+      "failures": []
+    },
+    {
+      "pr": 9,
+      "head": "c729174d3399df9d41145309221a48adae7b6dd2",
+      "state": "OPEN",
+      "draft": true,
+      "pending_checks": 0,
+      "failures": []
+    }
+  ]
+}

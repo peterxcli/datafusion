@@ -1,0 +1,47 @@
+[
+  {
+    "stage": 1,
+    "branch": "codex/parquet-io-1-policy",
+    "title": "feat: separate Parquet I/O policy from filter pushdown",
+    "base": "main",
+    "commit": "b8c7ba40874d57953620d44fe9b14d1011f50940",
+    "pr": 4,
+    "url": "https://github.com/peterxcli/datafusion/pull/4"
+  },
+  {
+    "stage": 2,
+    "branch": "codex/parquet-io-2-prefetch",
+    "title": "feat: add bounded Parquet row-group prefetch",
+    "base": "codex/parquet-io-1-policy",
+    "commit": "263a9bd74f7f7fc5c26e13a82df206da12b2fca9",
+    "url": "https://github.com/peterxcli/datafusion/pull/5",
+    "pr": 5
+  },
+  {
+    "stage": 3,
+    "branch": "codex/parquet-io-3-early-prefetch",
+    "title": "perf: start Parquet prefetch before predicate evaluation",
+    "base": "codex/parquet-io-2-prefetch",
+    "commit": "f3ebd935ad067b6a5ab453fd8770a87d3733099d",
+    "url": "https://github.com/peterxcli/datafusion/pull/7",
+    "pr": 7
+  },
+  {
+    "stage": 4,
+    "branch": "codex/parquet-io-4-shared-queue",
+    "title": "feat: experiment with a shared Parquet read-ahead queue",
+    "base": "codex/parquet-io-3-early-prefetch",
+    "commit": "06901f6fc8c9ecd96be7a61dc9b914a0bef6df93",
+    "url": "https://github.com/peterxcli/datafusion/pull/8",
+    "pr": 8
+  },
+  {
+    "stage": 5,
+    "branch": "codex/parquet-io-5-memory-governor",
+    "title": "feat: experiment with memory-governed scan read-ahead",
+    "base": "codex/parquet-io-4-shared-queue",
+    "commit": "c729174d3399df9d41145309221a48adae7b6dd2",
+    "url": "https://github.com/peterxcli/datafusion/pull/9",
+    "pr": 9
+  }
+]

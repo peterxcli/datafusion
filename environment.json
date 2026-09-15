@@ -1,0 +1,95 @@
+{
+  "baseline": "c14976481ea53d7e1806eb9dbc1cff803c6eba31",
+  "prs": [
+    {
+      "stage": 1,
+      "branch": "codex/parquet-io-1-policy",
+      "title": "feat: separate Parquet I/O policy from filter pushdown",
+      "base": "main",
+      "commit": "b8c7ba40874d57953620d44fe9b14d1011f50940",
+      "pr": 4,
+      "url": "https://github.com/peterxcli/datafusion/pull/4"
+    },
+    {
+      "stage": 2,
+      "branch": "codex/parquet-io-2-prefetch",
+      "title": "feat: add bounded Parquet row-group prefetch",
+      "base": "codex/parquet-io-1-policy",
+      "commit": "263a9bd74f7f7fc5c26e13a82df206da12b2fca9",
+      "url": "https://github.com/peterxcli/datafusion/pull/5",
+      "pr": 5
+    },
+    {
+      "stage": 3,
+      "branch": "codex/parquet-io-3-early-prefetch",
+      "title": "perf: start Parquet prefetch before predicate evaluation",
+      "base": "codex/parquet-io-2-prefetch",
+      "commit": "f3ebd935ad067b6a5ab453fd8770a87d3733099d",
+      "url": "https://github.com/peterxcli/datafusion/pull/7",
+      "pr": 7
+    },
+    {
+      "stage": 4,
+      "branch": "codex/parquet-io-4-shared-queue",
+      "title": "feat: experiment with a shared Parquet read-ahead queue",
+      "base": "codex/parquet-io-3-early-prefetch",
+      "commit": "06901f6fc8c9ecd96be7a61dc9b914a0bef6df93",
+      "url": "https://github.com/peterxcli/datafusion/pull/8",
+      "pr": 8
+    },
+    {
+      "stage": 5,
+      "branch": "codex/parquet-io-5-memory-governor",
+      "title": "feat: experiment with memory-governed scan read-ahead",
+      "base": "codex/parquet-io-4-shared-queue",
+      "commit": "c729174d3399df9d41145309221a48adae7b6dd2",
+      "url": "https://github.com/peterxcli/datafusion/pull/9",
+      "pr": 9
+    }
+  ],
+  "host": "cupid1.inter.lsa",
+  "kernel": "Linux cupid1.inter.lsa 6.12.74+deb13+1-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.74-2 (2026-03-08) x86_64 GNU/Linux",
+  "cpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           46 bits physical, 57 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  384\nOn-line CPU(s) list:                     0-383\nVendor ID:                               AuthenticAMD\nModel name:                              AMD EPYC 9654 96-Core Processor\nCPU family:                              25\nModel:                                   17\nThread(s) per core:                      2\nCore(s) per socket:                      96\nSocket(s):                               2\nStepping:                                1\nFrequency boost:                         enabled\nCPU(s) scaling MHz:                      41%\nCPU max MHz:                             3709.3569\nCPU min MHz:                             1500.0000\nBogoMIPS:                                4792.99\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl xtopology nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd amd_ppin cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq la57 rdpid overflow_recov succor smca fsrm flush_l1d sev sev_es debug_swap\nVirtualization:                          AMD-V\nL1d cache:                               6 MiB (192 instances)\nL1i cache:                               6 MiB (192 instances)\nL2 cache:                                192 MiB (192 instances)\nL3 cache:                                768 MiB (24 instances)\nNUMA node(s):                            2\nNUMA node0 CPU(s):                       0-95,192-287\nNUMA node1 CPU(s):                       96-191,288-383\nVulnerability Gather data sampling:      Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Mitigation; Safe RET\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; STIBP always-on; PBRSB-eIBRS Not affected; BHI Not affected\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Vulnerable: Clear CPU buffers attempted, no microcode\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Mitigation; IBPB before exit to userspace",
+  "filesystem": "TARGET SOURCE         FSTYPE OPTIONS\n/work  /dev/nvme0n1p1 xfs    rw,relatime,attr2,inode64,logbufs=8,logbsize=32k,noquota",
+  "nvme_numa_node": "1",
+  "memory": "MemTotal:       395782052 kB\nMemFree:        178896076 kB\nMemAvailable:   314715592 kB\nBuffers:         2527420 kB\nCached:         153525540 kB\nSwapCached:            0 kB\nActive:         93408416 kB\nInactive:       102871568 kB\nActive(anon):   65901036 kB\nInactive(anon):   751816 kB\nActive(file):   27507380 kB\nInactive(file): 102119752 kB\nUnevictable:       27400 kB\nMlocked:           24328 kB\nSwapTotal:             0 kB\nSwapFree:              0 kB\nZswap:                 0 kB\nZswapped:              0 kB\nDirty:              1688 kB\nWriteback:             0 kB\nAnonPages:      39527172 kB\nMapped:          3231520 kB\nShmem:          26417840 kB\nKReclaimable:   10147516 kB\nSlab:           13728280 kB\nSReclaimable:    9347172 kB\nSUnreclaim:      4381108 kB\nKernelStack:      324160 kB\nPageTables:       239772 kB\nSecPageTables:    233576 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:    197891024 kB\nCommitted_AS:   166328856 kB\nVmallocTotal:   13743895347199 kB\nVmallocUsed:      700976 kB\nVmallocChunk:          0 kB\nPercpu:          2136576 kB\nHardwareCorrupted:     0 kB\nAnonHugePages:  28868608 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:  13432832 kB\nFilePmdMapped:         0 kB\nUnaccepted:            0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB\nDirectMap4k:    28883676 kB\nDirectMap2M:    349360128 kB\nDirectMap1G:    25165824 kB\n",
+  "rust": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.0\nLLVM version: 22.1.6",
+  "benchmark_cpus": "96-111",
+  "numa_memory_node": 1,
+  "workers": 8,
+  "partitions": 8,
+  "memory_pool": "fair",
+  "memory_limit": "12G",
+  "batch_size": 8192,
+  "allocator": "mimalloc",
+  "spill_directory": "/work/peterxcli/datafusion-io-stack-20260916/spill",
+  "prefetch_bytes": 67108864,
+  "queue_jobs": 32,
+  "queue_bytes": 536870912,
+  "governor": "min(hard cap, (pool limit - reserved + own bytes) / 16)",
+  "dataset_manifest_sha256": "3e5b3ef69872c59380b944ed98ef255a55c81166fc24df3f5bd4c39a6cb718ca",
+  "validation_environment": "private PID namespace, CPUs 96-111, process file limit 65536",
+  "binaries": {
+    "0": "8665cc8fb117eae57757a7e1f5d558d14af806e070de1d5485b38c9f107cdf1b",
+    "1": "7669eeea33f105b283de2ad5022d6cb74298251f953496b41a914a1da045b3f6",
+    "2": "a634ec912491c96bbe371e21a3c34441c97fc0e5ad5d6d79468ddf4f540cbe6c",
+    "3": "21febc8dd9aeec4d72f80f004739d7b42eb6c9ed6efb3122ebcbfcb6b722b35e",
+    "4": "d65b088dba5e80091321bc36ba700cf2b0db1f5ae56f08a6caa051e5c9ccf2e3",
+    "5": "361f716b235f584e2155c040792392b6bcf33a0b98154bff210c94d421e291fe"
+  },
+  "validated_patch_sha256": {
+    "1": "6a7ce24f1af22d36c4c283af8bf57d39438ca31ccce38acd3971a9b2dd3154c2",
+    "2": "ae24a16cb08bf604451646f7fcdc5bc6320640e35d36c74c52159cd0d99864a0",
+    "3": "058d14717445482e59882b962d5871c2b856a8f226fa6d73869ce27a2ea452e2",
+    "4": "84f8b5fd7eb2ed7b3101759d83afda22402ee121e2e96dd08937619f9360baf0",
+    "5": "44ba152927a08516eddbf0b150193422732021c5a14968b0d0216996fc81eac9"
+  },
+  "harness": {
+    "0": "8665cc8fb117eae57757a7e1f5d558d14af806e070de1d5485b38c9f107cdf1b  /work/peterxcli/datafusion-io-stack-20260916/bin/stage0\n57666f7d77b6cbc8d6c15e8b0614da8a2391a2d25c16b279d4032e39c60c86d6  benchmarks/src/clickbench.rs\nf44d186f1c6304ca9803613ded79c6fb35da7fd1b985a253c3dd60a5c64c1598  benchmarks/examples/clickbench_overlap.rs\n",
+    "1": "7669eeea33f105b283de2ad5022d6cb74298251f953496b41a914a1da045b3f6  /work/peterxcli/datafusion-io-stack-20260916/bin/stage1\n57666f7d77b6cbc8d6c15e8b0614da8a2391a2d25c16b279d4032e39c60c86d6  benchmarks/src/clickbench.rs\nf44d186f1c6304ca9803613ded79c6fb35da7fd1b985a253c3dd60a5c64c1598  benchmarks/examples/clickbench_overlap.rs\n",
+    "2": "a634ec912491c96bbe371e21a3c34441c97fc0e5ad5d6d79468ddf4f540cbe6c  /work/peterxcli/datafusion-io-stack-20260916/bin/stage2\nef781942552f967d6140ba3c21aba89425b478f97f65d9a8f73978448ba60c82  benchmarks/src/clickbench.rs\nf44d186f1c6304ca9803613ded79c6fb35da7fd1b985a253c3dd60a5c64c1598  benchmarks/examples/clickbench_overlap.rs\n",
+    "3": "21febc8dd9aeec4d72f80f004739d7b42eb6c9ed6efb3122ebcbfcb6b722b35e  /work/peterxcli/datafusion-io-stack-20260916/bin/stage3\nef781942552f967d6140ba3c21aba89425b478f97f65d9a8f73978448ba60c82  benchmarks/src/clickbench.rs\nf44d186f1c6304ca9803613ded79c6fb35da7fd1b985a253c3dd60a5c64c1598  benchmarks/examples/clickbench_overlap.rs\n",
+    "4": "d65b088dba5e80091321bc36ba700cf2b0db1f5ae56f08a6caa051e5c9ccf2e3  /work/peterxcli/datafusion-io-stack-20260916/bin/stage4\n8ef41d4b15387ccafff2b796e17a72b5e0e2201e711a9286d318291e08649564  benchmarks/src/clickbench.rs\nf44d186f1c6304ca9803613ded79c6fb35da7fd1b985a253c3dd60a5c64c1598  benchmarks/examples/clickbench_overlap.rs\n",
+    "5": "361f716b235f584e2155c040792392b6bcf33a0b98154bff210c94d421e291fe  /work/peterxcli/datafusion-io-stack-20260916/bin/stage5\n8c5cf2fc63167cc15fef93e7965a1cded630df3b8cadabe0d9aa861372744324  benchmarks/src/clickbench.rs\nf44d186f1c6304ca9803613ded79c6fb35da7fd1b985a253c3dd60a5c64c1598  benchmarks/examples/clickbench_overlap.rs\n"
+  }
+}

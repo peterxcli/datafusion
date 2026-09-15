@@ -1,0 +1,389 @@
+[
+  {
+    "query_id": 0,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 1,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 2,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 3,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 4,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 5,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 6,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 7,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 8,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 9,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 10,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 11,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 12,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 13,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 14,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 15,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 16,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 17,
+    "executions": 78,
+    "multiset_match": false,
+    "mismatch_count": 76,
+    "baseline_mismatch_count": 12,
+    "ranking_values_match": null,
+    "limitation": "SQL has unordered LIMIT or incomplete tie ordering"
+  },
+  {
+    "query_id": 18,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 19,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 20,
+    "executions": 132,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 21,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 22,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 23,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 24,
+    "executions": 78,
+    "multiset_match": false,
+    "mismatch_count": 75,
+    "baseline_mismatch_count": 12,
+    "ranking_values_match": null,
+    "limitation": "SQL has unordered LIMIT or incomplete tie ordering"
+  },
+  {
+    "query_id": 25,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 26,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 27,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 28,
+    "executions": 132,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 29,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 30,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 31,
+    "executions": 78,
+    "multiset_match": false,
+    "mismatch_count": 77,
+    "baseline_mismatch_count": 12,
+    "ranking_values_match": true,
+    "limitation": "SQL has unordered LIMIT or incomplete tie ordering"
+  },
+  {
+    "query_id": 32,
+    "executions": 78,
+    "multiset_match": false,
+    "mismatch_count": 62,
+    "baseline_mismatch_count": 8,
+    "ranking_values_match": true,
+    "limitation": "SQL has unordered LIMIT or incomplete tie ordering"
+  },
+  {
+    "query_id": 33,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 34,
+    "executions": 132,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 35,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 36,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 37,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  },
+  {
+    "query_id": 38,
+    "executions": 78,
+    "multiset_match": false,
+    "mismatch_count": 69,
+    "baseline_mismatch_count": 10,
+    "ranking_values_match": true,
+    "limitation": "SQL has unordered LIMIT or incomplete tie ordering"
+  },
+  {
+    "query_id": 39,
+    "executions": 78,
+    "multiset_match": false,
+    "mismatch_count": 77,
+    "baseline_mismatch_count": 12,
+    "ranking_values_match": true,
+    "limitation": "SQL has unordered LIMIT or incomplete tie ordering"
+  },
+  {
+    "query_id": 40,
+    "executions": 78,
+    "multiset_match": false,
+    "mismatch_count": 57,
+    "baseline_mismatch_count": 8,
+    "ranking_values_match": true,
+    "limitation": "SQL has unordered LIMIT or incomplete tie ordering"
+  },
+  {
+    "query_id": 41,
+    "executions": 78,
+    "multiset_match": false,
+    "mismatch_count": 41,
+    "baseline_mismatch_count": 2,
+    "ranking_values_match": true,
+    "limitation": "SQL has unordered LIMIT or incomplete tie ordering"
+  },
+  {
+    "query_id": 42,
+    "executions": 78,
+    "multiset_match": true,
+    "mismatch_count": 0,
+    "baseline_mismatch_count": 0,
+    "ranking_values_match": null,
+    "limitation": null
+  }
+]
