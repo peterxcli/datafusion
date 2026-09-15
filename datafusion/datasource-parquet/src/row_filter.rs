@@ -460,7 +460,7 @@ pub(crate) struct PrebuiltRowFilterCandidate {
     physical_expr: Arc<dyn PhysicalExpr>,
     /// Projection mask over the parquet leaf columns needed to evaluate this
     /// predicate.
-    projection_mask: ProjectionMask,
+    pub(crate) projection_mask: ProjectionMask,
     /// Precomputed sum-of-compressed-bytes for the referenced columns across
     /// all row groups in the file. Used to sort predicates when
     /// `reorder_predicates` is enabled. Stable across row groups within a

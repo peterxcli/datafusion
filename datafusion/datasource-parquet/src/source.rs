@@ -347,6 +347,17 @@ impl ParquetSource {
         }
     }
 
+    /// Fetch pages progressively as decoding and row filtering require
+    /// them (the default). When false, the first demand read for each row group
+    /// fetches the output and predicate pages selected at file open together. This reduces
+    /// dependent I/O rounds but can read pages that filtering would skip.
+    /// Controls demand reads independently of next-row-group prefetch.
+    /// Also configurable as `datafusion.execution.parquet.progressive_io`.
+    pub fn with_progressive_io(mut self, progressive_io: bool) -> Self {
+        self.table_parquet_options.global.progressive_io = progressive_io;
+        self
+    }
+
     /// Set the `TableParquetOptions` for this ParquetSource.
     pub fn with_table_parquet_options(
         mut self,
@@ -634,6 +645,7 @@ impl FileSource for ParquetSource {
 
         Ok(Box::new(ParquetMorselizer {
             partition_index: partition,
+            progressive_io: self.table_parquet_options.global.progressive_io,
             projection: self.projection.clone(),
             batch_size: self
                 .batch_size
